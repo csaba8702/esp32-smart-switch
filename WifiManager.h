@@ -9,12 +9,10 @@ class WifiConfig {
 private:
     String ssid;
     String password;
-
 public:
-    WifiConfig(const char* wifi_ssid, const char* wifi_password) 
+    WifiConfig(const char* wifi_ssid, const char* wifi_password)
         : ssid(wifi_ssid), password(wifi_password) {}
-    
-    const char* getSSID() const { return ssid.c_str(); }
+    const char* getSSID()     const { return ssid.c_str(); }
     const char* getPassword() const { return password.c_str(); }
 };
 
@@ -22,28 +20,27 @@ class WifiManager {
 private:
     WifiConfig config;
     bool isConnected = false;
-    bool shouldRun = true;
-    bool debugMode = true;  // Debug mód alapértelmezetten bekapcsolva
+    bool shouldRun   = true;
+    bool debugMode   = true;
+
     TaskHandle_t reconnectTaskHandle = nullptr;
     static const uint16_t RECONNECT_INTERVAL = 5000;
-    static const uint8_t MAX_RETRIES = 10;
-    
-    std::function<void()> onConnectedCallback = nullptr;
-    std::function<void()> onDisconnectedCallback = nullptr;
-    std::function<void(const char*)> onErrorCallback = nullptr;
+    static const uint8_t  MAX_RETRIES        = 10;
+
+    std::function<void()>              onConnectedCallback    = nullptr;
+    std::function<void()>              onDisconnectedCallback = nullptr;
+    std::function<void(const char*)>   onErrorCallback        = nullptr;
 
     void debugPrint(const String& message) {
-        if (debugMode) {
-            Serial.println("[WiFi] " + message);
-        }
+        if (debugMode) Serial.println("[WiFi] " + message);
     }
 
     static void reconnectTask(void* parameter) {
-        WifiManager* wifiManager = static_cast<WifiManager*>(parameter);
-        while (wifiManager->shouldRun) {
-            if (!wifiManager->isConnected && WiFi.status() != WL_CONNECTED) {
-                wifiManager->debugPrint("Connection lost. Attempting to reconnect...");
-                wifiManager->connect();
+        WifiManager* wm = static_cast<WifiManager*>(parameter);
+        while (wm->shouldRun) {
+            if (!wm->isConnected && WiFi.status() != WL_CONNECTED) {
+                wm->debugPrint("Kapcsolat elveszett. Újracsatlakozás...");
+                wm->connect();
             }
             vTaskDelay(pdMS_TO_TICKS(RECONNECT_INTERVAL));
         }
@@ -51,75 +48,49 @@ private:
     }
 
     void startReconnectTask() {
-        xTaskCreate(
-            reconnectTask,
-            "WifiReconnect",
-            4096,
-            this,
-            1,
-            &reconnectTaskHandle
-        );
-        debugPrint("Reconnect task started");
+        xTaskCreate(reconnectTask, "WifiReconnect", 4096, this, 1, &reconnectTaskHandle);
+        debugPrint("Reconnect task elindítva");
     }
 
 public:
     WifiManager(const WifiConfig& wifiConfig) : config(wifiConfig) {}
 
-    ~WifiManager() {
-        close();
-    }
+    ~WifiManager() { close(); }
 
-    void setDebugMode(bool enable) {
-        debugMode = enable;
-        debugPrint(enable ? "Debug mode enabled" : "Debug mode disabled");
-    }
+    void setDebugMode(bool enable) { debugMode = enable; }
 
     bool connect() {
         uint8_t attempts = 0;
-        
-        debugPrint("Connecting to WiFi network: " + String(config.getSSID()));
+        debugPrint("Csatlakozás: " + String(config.getSSID()));
         WiFi.mode(WIFI_STA);
         WiFi.begin(config.getSSID(), config.getPassword());
 
         while (WiFi.status() != WL_CONNECTED && attempts < MAX_RETRIES) {
             delay(1000);
-            debugPrint("Connecting... Attempt " + String(attempts + 1) + "/" + String(MAX_RETRIES));
+            debugPrint("Próba " + String(attempts + 1) + "/" + String(MAX_RETRIES));
             attempts++;
         }
 
         if (WiFi.status() == WL_CONNECTED) {
             isConnected = true;
-            debugPrint("Connected successfully!");
-            debugPrint("IP address: " + WiFi.localIP().toString());
-            debugPrint("Signal strength (RSSI): " + String(WiFi.RSSI()) + " dBm");
-            if (onConnectedCallback) {
-                onConnectedCallback();
-            }
+            debugPrint("Csatlakozva! IP: " + WiFi.localIP().toString());
+            if (onConnectedCallback) onConnectedCallback();
             return true;
         } else {
             isConnected = false;
-            debugPrint("Connection failed!");
-            if (onErrorCallback) {
-                onErrorCallback("Failed to connect to WiFi");
-            }
+            debugPrint("Sikertelen csatlakozás!");
+            if (onErrorCallback) onErrorCallback("Sikertelen WiFi csatlakozás");
             return false;
         }
     }
 
     void begin() {
-        debugPrint("Initializing WiFi manager...");
+        debugPrint("WiFi manager inicializálása...");
         connect();
         startReconnectTask();
-        WiFi.begin(config.getSSID(), config.getPassword());
-        while (WiFi.status() != WL_CONNECTED) {
-            delay(500);
-        }
-        Serial.print("WiFi connected! IP address: ");
-        Serial.println(WiFi.localIP());
     }
 
     void close() {
-        debugPrint("Closing WiFi connection...");
         shouldRun = false;
         if (reconnectTaskHandle != nullptr) {
             vTaskDelete(reconnectTaskHandle);
@@ -128,47 +99,16 @@ public:
         WiFi.disconnect(true);
         WiFi.mode(WIFI_OFF);
         isConnected = false;
-        debugPrint("WiFi connection closed");
-        if (onDisconnectedCallback) {
-            onDisconnectedCallback();
-        }
+        if (onDisconnectedCallback) onDisconnectedCallback();
     }
 
-    bool isWifiConnected() const {
-        return isConnected && (WiFi.status() == WL_CONNECTED);
-    }
+    bool isWifiConnected() const { return isConnected && (WiFi.status() == WL_CONNECTED); }
+    String getLocalIP()    const { return WiFi.localIP().toString(); }
+    int32_t getRSSI()      const { return WiFi.RSSI(); }
 
-    String getLocalIP() const {
-        return WiFi.localIP().toString();
-    }
-
-    int32_t getRSSI() const {
-        return WiFi.RSSI();
-    }
-
-    void setOnConnected(std::function<void()> callback) {
-        onConnectedCallback = callback;
-    }
-
-    void setOnDisconnected(std::function<void()> callback) {
-        onDisconnectedCallback = callback;
-    }
-
-    void setOnError(std::function<void(const char*)> callback) {
-        onErrorCallback = callback;
-    }
-
-    void printStatus() {
-        if (isWifiConnected()) {
-            debugPrint("=== WiFi Status ===");
-            debugPrint("Connected to: " + String(config.getSSID()));
-            debugPrint("IP address: " + getLocalIP());
-            debugPrint("Signal strength (RSSI): " + String(getRSSI()) + " dBm");
-            debugPrint("=================");
-        } else {
-            debugPrint("WiFi is not connected");
-        }
-    }
+    void setOnConnected(std::function<void()> cb)            { onConnectedCallback = cb; }
+    void setOnDisconnected(std::function<void()> cb)         { onDisconnectedCallback = cb; }
+    void setOnError(std::function<void(const char*)> cb)     { onErrorCallback = cb; }
 };
 
 #endif // WIFI_MANAGER_H

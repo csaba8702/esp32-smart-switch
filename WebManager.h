@@ -1,4 +1,3 @@
-// WebManager.h
 #ifndef WEB_MANAGER_H
 #define WEB_MANAGER_H
 
@@ -9,268 +8,183 @@ class WebManager {
 private:
     WebServer server{8080};
     WifiManager& wifiManager;
-    
-    // Az index.html tartalma konstansként tárolva
+
     const char* INDEX_HTML = R"rawliteral(
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Kapuvezérlő</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>
-        body { 
-            font-family: Arial, sans-serif; 
-            margin: 20px;
-            background-color: #f0f0f0;
-        }
-        .container {
-            max-width: 600px;
-            margin: 0 auto;
-            background: white;
-            padding: 20px;
-            border-radius: 10px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        .status {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 10px;
-            margin-bottom: 20px;
-            padding: 15px;
-            background: #f8f9fa;
-            border-radius: 5px;
-        }
-        .status div {
-            text-align: center;
-        }
-        .controls {
-            display: grid;
-            grid-template-columns: 1fr; /* Csak egy oszlop */
-            gap: 10px;
-        }
-        button {
-            padding: 15px;
-            border: none;
-            border-radius: 5px;
-            background: #4CAF50;
-            color: white;
-            cursor: pointer;
-            font-size: 16px;
-        }
-        button:disabled {
-            background: #cccccc;
-            cursor: not-allowed;
-        }
-        button.pause {
-            background: #ff9800;
-        }
-        button.close {
-            background: #f44336;
-        }
-        .gate-progress {
-            width: 100%;
-            background-color: #f3f3f3;
-            border-radius: 5px;
-            overflow: hidden;
-            margin-top: 5px;
-        }
-        .progress-bar {
-            width: 0%;
-            height: 20px;
-            background-color: #4CAF50;
-            transition: width 0.3s ease;
-            position: relative;
-        }
-        .progress-text {
-            position: absolute;
-            width: 100%;
-            text-align: center;
-            color: white;
-            text-shadow: 1px 1px 1px rgba(0,0,0,0.5);
-        }
-    </style>
+  <meta charset="UTF-8">
+  <title>ESP32 Smart Switch</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: Arial, sans-serif;
+      background: #1a1a2e;
+      color: #eee;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 20px;
+    }
+    h1 { margin: 20px 0 10px; font-size: 1.4em; color: #a0c4ff; }
+    #status-bar {
+      font-size: 0.85em;
+      color: #aaa;
+      margin-bottom: 20px;
+    }
+    #status-bar span { margin: 0 8px; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 16px;
+      width: 100%;
+      max-width: 480px;
+    }
+    .card {
+      background: #16213e;
+      border-radius: 12px;
+      padding: 20px;
+      text-align: center;
+      border: 2px solid #0f3460;
+      transition: border-color 0.3s;
+    }
+    .card.on { border-color: #4ade80; }
+    .card h3 { font-size: 1em; margin-bottom: 12px; color: #ccc; }
+    .toggle {
+      width: 70px;
+      height: 36px;
+      border-radius: 18px;
+      border: none;
+      cursor: pointer;
+      font-size: 0.85em;
+      font-weight: bold;
+      letter-spacing: 1px;
+      transition: background 0.3s;
+      background: #374151;
+      color: #9ca3af;
+    }
+    .toggle.on {
+      background: #4ade80;
+      color: #14532d;
+    }
+    .dot {
+      display: inline-block;
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: #4ade80;
+      margin-right: 5px;
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+    #ws-status { color: #f87171; }
+    #ws-status.connected { color: #4ade80; }
+  </style>
 </head>
 <body>
-    <div class="container">
-        <div class="status">
-            <div>
-                <h3>Bal Kapu</h3>
-                <div class="gate-progress">
-                    <div class="progress-bar" id="leftGateProgress">
-                        <span class="progress-text">0%</span>
-                    </div>
-                </div>
-            </div>
-            <div>
-                <h3>Jobb Kapu</h3>
-                <div class="gate-progress">
-                    <div class="progress-bar" id="rightGateProgress">
-                        <span class="progress-text">0%</span>
-                    </div>
-                </div>
-            </div>
-            <div id="wifiStatus">WiFi: Csatlakozva</div>
-            <div id="signalStrength">Jelerősség: --- dBm</div>
-        </div>
-        
-        <div class="controls">
-            <button id="openGatesBtn" onclick="toggleGates()" class="btn btn-primary">Kapuk Nyitasa</button>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0;">
-                <button id="gate1Btn" onclick="toggleGate1()" class="btn btn-primary">Kapu 1 Nyitasa</button>
-                <button id="gate2Btn" onclick="toggleGate2()" class="btn btn-primary">Kapu 2 Nyitasa</button>
-            </div>
-        </div>
-    </div>
+  <h1>ESP32 Smart Switch</h1>
+  <div id="status-bar">
+    <span id="ws-status">● Kapcsolódás...</span>
+    <span id="wifi-rssi"></span>
+    <span id="wifi-ip"></span>
+  </div>
+  <div class="grid" id="relay-grid">
+    <!-- JS tölti fel -->
+  </div>
 
-    <script>
-        let wsUrl = `ws://${window.location.hostname}:81`;
-        const socket = new WebSocket(wsUrl);
-        
-        // Gombok állapotának kezelése
-        function updateButtonStates(gateData) {
-            console.log("Received gate data:", gateData);
+  <script>
+    const RELAY_COUNT = 4;
+    const states = {};
 
-            const button = document.getElementById(`gate${gateData.gate}Btn`);
-            const toggleBtn = document.getElementById('openGatesBtn');
-            
-            if (!button) {
-                console.error(`Button not found for gate ${gateData.gate}`);
-                return;
-            }
+    const grid = document.getElementById('relay-grid');
+    const wsStatus = document.getElementById('ws-status');
 
-            // Egyedi kapu gomb frissítése - csak akkor tiltjuk le, ha ténylegesen mozog
-            if (gateData.isMoving) {
-                button.disabled = true;
-            } else {
-                button.disabled = false;  // Ha nem mozog, mindig engedélyezzük
-            }
+    // Kártyák generálása
+    for (let i = 1; i <= RELAY_COUNT; i++) {
+      states[i] = false;
+      grid.innerHTML += `
+        <div class="card" id="card-${i}">
+          <h3 id="name-${i}">Relé ${i}</h3>
+          <button class="toggle" id="btn-${i}" onclick="toggle(${i})">KI</button>
+        </div>`;
+    }
 
-            // Gomb szövegének frissítése
-            if (gateData.state === 2) { // OPENED állapot
-                button.textContent = `Kapu ${gateData.gate} Zárása`;
-            } else if (gateData.state === 0) { // CLOSED állapot
-                button.textContent = `Kapu ${gateData.gate} Nyitasa`;
-            }
+    function toggle(id) {
+      socket.send(JSON.stringify({action: 'toggle', id: id}));
+    }
 
-            // Közös gomb frissítése
-            const gate1Btn = document.getElementById('gate1Btn');
-            const gate2Btn = document.getElementById('gate2Btn');
-            
-            const bothOpen = gate1Btn.textContent.includes('Zárása') && gate2Btn.textContent.includes('Zárása');
-            const bothClosed = !gate1Btn.textContent.includes('Zárása') && !gate2Btn.textContent.includes('Zárása');
-            const anyMoving = gateData.isMoving || 
-                             (gateData.gate === 1 ? gate2Btn.disabled : gate1Btn.disabled);
-            
-            if (bothOpen) {
-                toggleBtn.textContent = 'Kapuk Zárása';
-                toggleBtn.disabled = anyMoving;
-            } else if (bothClosed) {
-                toggleBtn.textContent = 'Kapuk Nyitása';
-                toggleBtn.disabled = anyMoving;
-            } else {
-                toggleBtn.disabled = true;
-            }
+    function updateRelay(id, state, name) {
+      states[id] = state;
+      const btn  = document.getElementById('btn-' + id);
+      const card = document.getElementById('card-' + id);
+      const nm   = document.getElementById('name-' + id);
+      if (!btn) return;
+      btn.textContent = state ? 'BE' : 'KI';
+      btn.className   = 'toggle' + (state ? ' on' : '');
+      card.className  = 'card' + (state ? ' on' : '');
+      if (name) nm.textContent = name;
+    }
 
-            console.log('Button states:', {
-                gate: gateData.gate,
-                buttonText: button.textContent,
-                buttonDisabled: button.disabled,
-                toggleText: toggleBtn.textContent,
-                toggleDisabled: toggleBtn.disabled,
-                bothOpen,
-                bothClosed,
-                anyMoving
-            });
+    const socket = new WebSocket(`ws://${location.hostname}:81`);
+
+    socket.onopen = () => {
+      wsStatus.textContent = '● Csatlakozva';
+      wsStatus.className = 'connected';
+    };
+
+    socket.onclose = () => {
+      wsStatus.textContent = '● Kapcsolat megszakadt';
+      wsStatus.className = '';
+      setTimeout(() => location.reload(), 3000);
+    };
+
+    socket.onerror = () => {
+      wsStatus.textContent = '● Hiba';
+    };
+
+    socket.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'relay') {
+          updateRelay(data.id, data.state, data.name);
+        } else if (data.type === 'wifi') {
+          document.getElementById('wifi-rssi').textContent = data.rssi + ' dBm';
+          document.getElementById('wifi-ip').textContent   = data.ip;
         }
-
-        function toggleGate1() {
-            const btn = document.getElementById('gate1Btn');
-            const command = btn.textContent.includes('Zárása') ? 'closegate1' : 'opengate1';
-            socket.send(command);
-        }
-
-        function toggleGate2() {
-            const btn = document.getElementById('gate2Btn');
-            const command = btn.textContent.includes('Zárása') ? 'closegate2' : 'opengate2';
-            socket.send(command);
-        }
-
-        function toggleGates() {
-            const btn = document.getElementById('openGatesBtn');
-            const command = btn.textContent.includes('Zárása') ? 'closegates' : 'opengates';
-            socket.send(command);
-            
-            // Letiltjuk a gombokat amíg a szerver nem válaszol
-            document.getElementById('gate1Btn').disabled = true;
-            document.getElementById('gate2Btn').disabled = true;
-            btn.disabled = true;
-        }
-        
-        socket.onopen = function() {
-            console.log("WebSocket kapcsolat létrejött");
-            document.getElementById('wifiStatus').textContent = "WiFi: Csatlakozva a szerverhez";
-        };
-        
-        socket.onmessage = function(event) {
-            console.log("Fogadott üzenet:", event.data);
-            try {
-                const data = JSON.parse(event.data);
-                if (data.type === 'wifi') {
-                    document.getElementById('wifiStatus').textContent = 
-                        `WiFi: ${data.connected ? 'Csatlakozva' : 'Nem csatlakozva'}`;
-                    document.getElementById('signalStrength').textContent = 
-                        `Jelerősség: ${data.rssi} dBm`;
-                }
-                else if (data.type === 'gate') {
-                    updateButtonStates(data);
-                }
-            } catch (e) {
-                console.error("Hibás JSON üzenet:", e);
-            }
-        };
-        
-        socket.onerror = function(error) {
-            console.error("WebSocket hiba:", error);
-            document.getElementById('wifiStatus').textContent = "WiFi: Kapcsolódási hiba";
-        };
-        
-        socket.onclose = function() {
-            console.log("WebSocket kapcsolat lezárult");
-            document.getElementById('wifiStatus').textContent = "WiFi: Kapcsolat megszakadt";
-        };
-    </script>
+      } catch(e) {
+        console.error('JSON hiba:', e);
+      }
+    };
+  </script>
 </body>
 </html>
 )rawliteral";
-    
+
     void setupRoutes() {
-        // Alap útvonal kezelése
         server.on("/", HTTP_GET, [this]() {
             server.send(200, "text/html", INDEX_HTML);
         });
-        
-        // 404-es hiba kezelése
         server.onNotFound([this]() {
-            Serial.printf("[WebManager] 404: Nem található: %s\n", server.uri().c_str());
-            server.send(404, "text/plain", "404: Oldal nem található");
+            server.send(404, "text/plain", "404: Nem található");
         });
     }
 
 public:
     WebManager(WifiManager& wm) : wifiManager(wm) {}
-    
+
     void begin() {
-        // Útvonalak beállítása
         setupRoutes();
-        
-        // Szerver indítása
         server.begin();
         Serial.println("[WebManager] HTTP szerver elindult a 8080-as porton");
     }
-    
+
     void handle() {
         server.handleClient();
     }
 };
 
-#endif
+#endif // WEB_MANAGER_H

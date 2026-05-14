@@ -1,30 +1,34 @@
+#include "WifiManager.h"
 #include "WebManager.h"
 #include "WebSocketManager.h"
-#include "WifiManager.h"
-#include "GateController.h"
+#include "DeviceTypes.h"
+#include "DeviceManager.h"
 #include "SensorManager.h"
 
-const int LED_PIN = 2;
-static WifiConfig wifiConfig("ARRIS-6D0C", "mQ7kNcL3hQcf");
-static WifiManager wifiManager(wifiConfig);
-static SensorManager sensorManager;
-static GateController gateController(sensorManager);
-static WebManager webManager(wifiManager);
-static WebSocketManager webSocketManager(gateController, wifiManager);
+// --- WiFi beállítások ---
+static WifiConfig wifiConfig("SSID", "JELSZO");
+
+// --- Modulok ---
+static WifiManager      wifiManager(wifiConfig);
+static DeviceManager    deviceManager;
+static WebManager       webManager(wifiManager);
+static WebSocketManager webSocketManager(deviceManager, wifiManager);
+static SensorManager    sensorManager;
 
 void setup() {
     Serial.begin(115200);
-    pinMode(LED_PIN, OUTPUT);
-    
     wifiManager.begin();
+    deviceManager.begin();
     webManager.begin();
     webSocketManager.begin();
     sensorManager.begin();
+    Serial.println("[Main] Rendszer elindult.");
+    Serial.println("[Main] Webfelület: http://" + wifiManager.getLocalIP() + ":8080");
 }
 
 void loop() {
     webManager.handle();
     webSocketManager.handle();
-    gateController.handle();
+    deviceManager.handle();
     sensorManager.handle();
 }
