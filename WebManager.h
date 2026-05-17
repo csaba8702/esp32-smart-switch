@@ -12,7 +12,6 @@ private:
     EepromManager* eeprom = nullptr;
     String sessionToken = "";
 
-    // --- Token generálás ---
     String generateToken() {
         String token = "";
         const char chars[] = "0123456789abcdef";
@@ -22,7 +21,6 @@ private:
         return token;
     }
 
-    // --- Cookie kiolvasás ---
     String getCookieValue(const String& cookieHeader, const String& name) {
         String search = name + "=";
         int start = cookieHeader.indexOf(search);
@@ -33,7 +31,6 @@ private:
         return cookieHeader.substring(start, end);
     }
 
-    // --- Auth ellenőrzés ---
     bool isAuthenticated() {
         if (sessionToken.isEmpty()) return false;
         String cookieHeader = server.header("Cookie");
@@ -41,7 +38,6 @@ private:
         return token == sessionToken;
     }
 
-    // --- Login HTML ---
     const char* LOGIN_HTML = R"rawliteral(
 <!DOCTYPE html>
 <html>
@@ -124,7 +120,6 @@ private:
 </html>
 )rawliteral";
 
-    // --- Főoldal HTML ---
     const char* INDEX_HTML = R"rawliteral(
 <!DOCTYPE html>
 <html>
@@ -144,7 +139,14 @@ private:
       align-items: center;
       padding: 20px;
     }
-    h1 { margin: 20px 0 10px; font-size: 1.4em; color: #a0c4ff; }
+    h1 { margin: 20px 0 6px; font-size: 1.4em; color: #a0c4ff; }
+    #datetime {
+      font-size: 1em;
+      color: #a0c4ff;
+      font-weight: 500;
+      margin-bottom: 8px;
+      letter-spacing: 0.5px;
+    }
     #status-bar {
       font-size: 0.85em;
       color: #aaa;
@@ -198,6 +200,7 @@ private:
 </head>
 <body>
   <h1>ESP32 Smart Switch</h1>
+  <div id="datetime">Szinkronizálás...</div>
   <div id="status-bar">
     <span id="ws-status">● Kapcsolódás...</span>
     <span id="wifi-rssi"></span>
@@ -268,6 +271,9 @@ private:
         } else if (data.type === 'wifi') {
           document.getElementById('wifi-rssi').textContent = data.rssi + ' dBm';
           document.getElementById('wifi-ip').textContent   = data.ip;
+        } else if (data.type === 'time') {
+          const el = document.getElementById('datetime');
+          if (el) el.textContent = data.display;
         }
       } catch(e) {
         console.error('JSON hiba:', e);
@@ -279,7 +285,6 @@ private:
 )rawliteral";
 
     void setupRoutes() {
-        // Főoldal – auth szükséges
         server.on("/", HTTP_GET, [this]() {
             if (!isAuthenticated()) {
                 server.sendHeader("Location", "/login");
@@ -289,7 +294,6 @@ private:
             server.send(200, "text/html", INDEX_HTML);
         });
 
-        // Login oldal
         server.on("/login", HTTP_GET, [this]() {
             if (isAuthenticated()) {
                 server.sendHeader("Location", "/");
@@ -299,15 +303,12 @@ private:
             server.send(200, "text/html", LOGIN_HTML);
         });
 
-        // Login POST
         server.on("/login", HTTP_POST, [this]() {
             String pass = server.arg("pass");
             String storedPass = (eeprom != nullptr) ? eeprom->loadWebPassword() : "admin";
             if (pass == storedPass) {
-                // Token generálás és mentés
                 sessionToken = generateToken();
                 if (eeprom != nullptr) eeprom->saveToken(sessionToken);
-                // Cookie beállítás – 30 napos
                 String cookie = "token=" + sessionToken + "; Max-Age=2592000; Path=/; HttpOnly";
                 server.sendHeader("Set-Cookie", cookie);
                 server.sendHeader("Location", "/");
@@ -319,9 +320,7 @@ private:
             }
         });
 
-        // Logout
         server.on("/logout", HTTP_POST, [this]() {
-            // Cookie törlés
             server.sendHeader("Set-Cookie", "token=; Max-Age=0; Path=/");
             server.send(200, "text/plain", "OK");
             Serial.println("[Auth] Kijelentkezés.");
@@ -337,7 +336,6 @@ public:
 
     void setEeprom(EepromManager& em) {
         eeprom = &em;
-        // Token betöltés EEPROM-ból
         sessionToken = eeprom->loadToken();
         if (sessionToken.length() > 0) {
             Serial.println("[Auth] Token betöltve EEPROM-ból.");
@@ -345,7 +343,6 @@ public:
     }
 
     void begin() {
-        // Cookie header olvasáshoz szükséges
         const char* headers[] = {"Cookie"};
         server.collectHeaders(headers, 1);
         setupRoutes();

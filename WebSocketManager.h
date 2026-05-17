@@ -5,15 +5,20 @@
 #include <ArduinoJson.h>
 #include "DeviceManager.h"
 #include "WifiManager.h"
+#include "NTPManager.h"
 
 class WebSocketManager {
 private:
     WebSocketsServer webSocket{81};
     DeviceManager& deviceManager;
     WifiManager& wifiManager;
+    NTPManager* ntpManager = nullptr;
+
     bool hasConnectedClients = false;
     unsigned long lastWifiUpdateTime = 0;
+    unsigned long lastTimeUpdateTime = 0;
     static const unsigned long WIFI_UPDATE_INTERVAL = 5000;
+    static const unsigned long TIME_UPDATE_INTERVAL = 1000;
 
     void sendWifiStatus() {
         if (!hasConnectedClients) return;
@@ -22,6 +27,18 @@ private:
         doc["connected"] = wifiManager.isWifiConnected();
         doc["rssi"]      = wifiManager.getRSSI();
         doc["ip"]        = wifiManager.getLocalIP();
+        String json;
+        serializeJson(doc, json);
+        webSocket.broadcastTXT(json);
+    }
+
+    void sendTimeUpdate() {
+        if (!hasConnectedClients || ntpManager == nullptr) return;
+        StaticJsonDocument<128> doc;
+        doc["type"]     = "time";
+        doc["datetime"] = ntpManager->getDateTimeISO();   // "2026-05-17T23:14:52"
+        doc["display"]  = ntpManager->getDisplayString(); // "2026.05.17. 23:14:52"
+        doc["synced"]   = ntpManager->isSynced();
         String json;
         serializeJson(doc, json);
         webSocket.broadcastTXT(json);
@@ -40,15 +57,24 @@ private:
     }
 
     void sendAllStates(uint8_t clientNum) {
-        // WiFi állapot
         sendWifiStatus();
-        // Mind a 4 relé állapota
         for (int i = 1; i <= RELAY_COUNT; i++) {
             StaticJsonDocument<128> doc;
             doc["type"]  = "relay";
             doc["id"]    = i;
             doc["state"] = deviceManager.getState(i);
             doc["name"]  = deviceManager.getName(i);
+            String json;
+            serializeJson(doc, json);
+            webSocket.sendTXT(clientNum, json);
+        }
+        // Időt is küldjük azonnal csatlakozáskor
+        if (ntpManager != nullptr) {
+            StaticJsonDocument<128> doc;
+            doc["type"]     = "time";
+            doc["datetime"] = ntpManager->getDateTimeISO();
+            doc["display"]  = ntpManager->getDisplayString();
+            doc["synced"]   = ntpManager->isSynced();
             String json;
             serializeJson(doc, json);
             webSocket.sendTXT(clientNum, json);
@@ -67,7 +93,6 @@ private:
         if (!action) return;
 
         if (strcmp(action, "relay") == 0) {
-            // {"action":"relay","id":1,"state":true}
             uint8_t id = doc["id"];
             bool state  = doc["state"];
             if (deviceManager.setRelay(id, state)) {
@@ -75,13 +100,11 @@ private:
             }
         }
         else if (strcmp(action, "toggle") == 0) {
-            // {"action":"toggle","id":1}
             uint8_t id = doc["id"];
             if (deviceManager.toggleRelay(id)) {
                 sendRelayStatus(id);
             }
         }
-        // Skeleton: további parancsok (konfiguráció, szenzor lekérdezés, stb.)
     }
 
     void handleWebSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length) {
@@ -117,6 +140,10 @@ public:
         });
     }
 
+    void setNTP(NTPManager& ntp) {
+        ntpManager = &ntp;
+    }
+
     void begin() {
         webSocket.begin();
         Serial.println("[WebSocket] Szerver elindult a 81-es porton");
@@ -128,6 +155,10 @@ public:
         if (now - lastWifiUpdateTime >= WIFI_UPDATE_INTERVAL) {
             sendWifiStatus();
             lastWifiUpdateTime = now;
+        }
+        if (now - lastTimeUpdateTime >= TIME_UPDATE_INTERVAL) {
+            sendTimeUpdate();
+            lastTimeUpdateTime = now;
         }
     }
 };
