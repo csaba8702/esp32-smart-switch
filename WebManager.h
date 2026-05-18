@@ -15,9 +15,7 @@ private:
     String generateToken() {
         String token = "";
         const char chars[] = "0123456789abcdef";
-        for (int i = 0; i < 32; i++) {
-            token += chars[esp_random() % 16];
-        }
+        for (int i = 0; i < 32; i++) token += chars[esp_random() % 16];
         return token;
     }
 
@@ -46,51 +44,15 @@ private:
   <title>Bejelentkezés</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: Arial, sans-serif;
-      background: #1a1a2e;
-      color: #eee;
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .box {
-      background: #16213e;
-      border-radius: 12px;
-      padding: 40px 32px;
-      width: 100%;
-      max-width: 320px;
-      border: 1px solid #0f3460;
-      text-align: center;
-    }
-    h2 { color: #a0c4ff; margin-bottom: 24px; font-size: 1.2em; }
-    input {
-      width: 100%;
-      padding: 10px 14px;
-      border-radius: 8px;
-      border: 1px solid #0f3460;
-      background: #0f3460;
-      color: #eee;
-      font-size: 1em;
-      margin-bottom: 16px;
-      outline: none;
-    }
-    input:focus { border-color: #a0c4ff; }
-    button {
-      width: 100%;
-      padding: 10px;
-      border-radius: 8px;
-      border: none;
-      background: #4ade80;
-      color: #14532d;
-      font-size: 1em;
-      font-weight: bold;
-      cursor: pointer;
-    }
-    button:hover { background: #22c55e; }
-    .error { color: #f87171; margin-top: 12px; font-size: 0.9em; }
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:Arial,sans-serif;background:#0f172a;color:#eee;min-height:100vh;display:flex;align-items:center;justify-content:center}
+    .box{background:#1e293b;border-radius:14px;padding:40px 32px;width:100%;max-width:320px;border:1px solid #334155;text-align:center}
+    h2{color:#a0c4ff;margin-bottom:24px;font-size:1.2em}
+    input{width:100%;padding:10px 14px;border-radius:8px;border:1px solid #334155;background:#0f172a;color:#eee;font-size:1em;margin-bottom:16px;outline:none}
+    input:focus{border-color:#a0c4ff}
+    button{width:100%;padding:10px;border-radius:8px;border:none;background:#22c55e;color:#052e16;font-size:1em;font-weight:bold;cursor:pointer}
+    button:hover{background:#16a34a}
+    .error{color:#f87171;margin-top:12px;font-size:0.9em}
   </style>
 </head>
 <body>
@@ -103,17 +65,8 @@ private:
   <script>
     function login() {
       const pass = document.getElementById('pass').value;
-      fetch('/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: 'pass=' + encodeURIComponent(pass)
-      }).then(r => {
-        if (r.ok) {
-          window.location.href = '/';
-        } else {
-          document.getElementById('err').textContent = 'Hibás jelszó!';
-        }
-      });
+      fetch('/login', {method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'pass='+encodeURIComponent(pass)})
+        .then(r => { if(r.ok) window.location.href='/'; else document.getElementById('err').textContent='Hibás jelszó!'; });
     }
   </script>
 </body>
@@ -128,139 +81,207 @@ private:
   <title>ESP32 Smart Switch</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: Arial, sans-serif;
-      background: #1a1a2e;
-      color: #eee;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      padding: 20px;
-    }
-    h1 { margin: 20px 0 6px; font-size: 1.4em; color: #a0c4ff; }
-    #datetime {
-      font-size: 1em;
-      color: #a0c4ff;
-      font-weight: 500;
-      margin-bottom: 8px;
-      letter-spacing: 0.5px;
-    }
-    #status-bar {
-      font-size: 0.85em;
-      color: #aaa;
-      margin-bottom: 20px;
-    }
-    #status-bar span { margin: 0 8px; }
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 16px;
-      width: 100%;
-      max-width: 480px;
-    }
-    .card {
-      background: #16213e;
-      border-radius: 12px;
-      padding: 20px;
-      text-align: center;
-      border: 2px solid #0f3460;
-      transition: border-color 0.3s;
-    }
-    .card.on { border-color: #4ade80; }
-    .card h3 { font-size: 1em; margin-bottom: 12px; color: #ccc; }
-    .toggle {
-      width: 70px; height: 36px;
-      border-radius: 18px;
-      border: none;
-      cursor: pointer;
-      font-size: 0.85em;
-      font-weight: bold;
-      letter-spacing: 1px;
-      transition: background 0.3s;
-      background: #374151;
-      color: #9ca3af;
-    }
-    .toggle.on { background: #4ade80; color: #14532d; }
-    #ws-status { color: #f87171; }
-    #ws-status.connected { color: #4ade80; }
-    #logout-btn {
-      margin-top: 24px;
-      padding: 8px 20px;
-      border-radius: 8px;
-      border: 1px solid #374151;
-      background: transparent;
-      color: #aaa;
-      cursor: pointer;
-      font-size: 0.85em;
-    }
-    #logout-btn:hover { border-color: #f87171; color: #f87171; }
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:Arial,sans-serif;background:#0f172a;color:#eee;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:16px}
+    .topbar{width:100%;max-width:480px;display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;padding:0 2px}
+    .topbar-title{font-size:1.1em;font-weight:600;color:#a0c4ff}
+    .topbar-right{display:flex;align-items:center;gap:10px}
+    .ws-dot{width:8px;height:8px;border-radius:50%;background:#ef4444}
+    .ws-dot.on{background:#22c55e}
+    #datetime{font-size:0.85em;color:#64748b;margin-bottom:4px;width:100%;max-width:480px;text-align:right;padding:0 2px}
+    .statusbar{width:100%;max-width:480px;display:flex;gap:10px;font-size:0.78em;color:#475569;margin-bottom:14px;padding:0 2px}
+    .logout-btn{background:transparent;border:1px solid #334155;border-radius:6px;color:#64748b;padding:4px 10px;font-size:0.78em;cursor:pointer}
+    .logout-btn:hover{border-color:#ef4444;color:#f87171}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;width:100%;max-width:480px}
+
+    /* Kártya */
+    .card{background:#1e293b;border-radius:12px;border:2px solid #334155;padding:14px;transition:border-color .25s}
+    .card.on{border-color:#22c55e}
+    .card-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px}
+    .card-icon{width:38px;height:38px;border-radius:9px;background:#0f172a;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0}
+    .card.on .card-icon{background:#052e16}
+    .gear{background:transparent;border:none;cursor:pointer;color:#475569;font-size:15px;padding:2px 4px;border-radius:4px;line-height:1}
+    .gear:hover{color:#94a3b8;background:#334155}
+    .card-name{font-size:0.9em;font-weight:500;color:#e2e8f0;margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .card-meta{font-size:0.75em;color:#475569}
+    .card.on .card-meta{color:#4ade80}
+    .card-footer{display:flex;align-items:center;justify-content:space-between;margin-top:10px}
+    .toggle{width:58px;height:30px;border-radius:15px;border:none;cursor:pointer;font-size:0.78em;font-weight:600;letter-spacing:.5px;transition:background .25s;background:#334155;color:#64748b}
+    .toggle.on{background:#22c55e;color:#052e16}
+    .runtime{font-size:0.72em;color:#475569}
+    .runtime.on{color:#86efac}
+
+    /* Konfig panel */
+    .cfg-panel{background:#1e293b;border-top:1px solid #334155;padding:14px;width:100%;max-width:480px;border-radius:0 0 12px 12px;margin-top:-4px}
+    .cfg-title{font-size:0.82em;color:#64748b;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+    .cfg-row{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #1e293b}
+    .cfg-label{font-size:0.83em;color:#94a3b8}
+    .cfg-val{font-size:0.83em;color:#64748b}
+    .badge{font-size:0.75em;padding:2px 8px;border-radius:4px;background:#0f172a;border:1px solid #334155;color:#64748b}
+    .inp-row{display:flex;gap:8px;margin-top:10px}
+    .inp{flex:1;background:#0f172a;border:1px solid #334155;border-radius:6px;padding:6px 10px;color:#e2e8f0;font-size:0.83em;outline:none}
+    .inp:focus{border-color:#3b82f6}
+    .save-btn{background:#3b82f6;color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:0.83em;cursor:pointer;font-weight:500;white-space:nowrap}
+    .save-btn:hover{background:#2563eb}
+
+    /* Toast */
+    .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1e293b;border:1px solid #22c55e;border-radius:8px;padding:10px 18px;font-size:0.85em;color:#4ade80;opacity:0;transition:opacity .3s;pointer-events:none;white-space:nowrap;z-index:999}
+    .toast.show{opacity:1}
   </style>
 </head>
 <body>
-  <h1>ESP32 Smart Switch</h1>
-  <div id="datetime">Szinkronizálás...</div>
-  <div id="status-bar">
-    <span id="ws-status">● Kapcsolódás...</span>
-    <span id="wifi-rssi"></span>
-    <span id="wifi-ip"></span>
+
+  <div class="topbar">
+    <span class="topbar-title">ESP32 Smart Switch</span>
+    <div class="topbar-right">
+      <span id="wifi-rssi" style="font-size:0.78em;color:#475569"></span>
+      <span id="wifi-ip" style="font-size:0.78em;color:#475569"></span>
+      <div class="ws-dot" id="ws-dot"></div>
+      <button class="logout-btn" onclick="logout()">Ki</button>
+    </div>
   </div>
+  <div id="datetime" style="text-align:right">Szinkronizálás...</div>
+  <div class="statusbar" id="statusbar"></div>
+
   <div class="grid" id="relay-grid"></div>
-  <button id="logout-btn" onclick="logout()">Kijelentkezés</button>
+  <div class="cfg-panel" id="cfg-panel" style="display:none"></div>
+  <div class="toast" id="toast"></div>
 
   <script>
     const RELAY_COUNT = 4;
+    const ICONS = {GENERIC:'⚡', WATER_PUMP:'💧', GATE:'🚪', LIGHT:'💡', MOTOR:'⚙'};
     const states = {};
-    const grid = document.getElementById('relay-grid');
-    const wsStatus = document.getElementById('ws-status');
+    const names  = {};
+    const startTimes = {};
+    let activeConfig = null;
+    let runtimeInterval = null;
 
+    const grid     = document.getElementById('relay-grid');
+    const cfgPanel = document.getElementById('cfg-panel');
+    const wsDot    = document.getElementById('ws-dot');
+
+    // Kártyák generálása
     for (let i = 1; i <= RELAY_COUNT; i++) {
       states[i] = false;
+      names[i]  = 'Relé ' + i;
+      startTimes[i] = 0;
       grid.innerHTML += `
         <div class="card" id="card-${i}">
-          <h3 id="name-${i}">Relé ${i}</h3>
-          <button class="toggle" id="btn-${i}" onclick="toggle(${i})">KI</button>
+          <div class="card-header">
+            <div class="card-icon" id="icon-${i}">⚡</div>
+            <button class="gear" onclick="openConfig(${i})" title="Beállítások">⚙</button>
+          </div>
+          <div class="card-name" id="name-${i}">Relé ${i}</div>
+          <div class="card-meta" id="meta-${i}">—</div>
+          <div class="card-footer">
+            <button class="toggle" id="btn-${i}" onclick="doToggle(${i})">KI</button>
+            <span class="runtime" id="runtime-${i}"></span>
+          </div>
         </div>`;
     }
 
-    function toggle(id) {
-      socket.send(JSON.stringify({action: 'toggle', id: id}));
-    }
-
-    function logout() {
-      fetch('/logout', { method: 'POST' }).then(() => {
-        window.location.href = '/login';
-      });
+    function doToggle(id) {
+      socket.send(JSON.stringify({action:'toggle', id:id}));
     }
 
     function updateRelay(id, state, name) {
       states[id] = state;
-      const btn  = document.getElementById('btn-' + id);
-      const card = document.getElementById('card-' + id);
-      const nm   = document.getElementById('name-' + id);
+      if (name) names[id] = name;
+      const card = document.getElementById('card-'+id);
+      const btn  = document.getElementById('btn-'+id);
+      const nm   = document.getElementById('name-'+id);
+      const meta = document.getElementById('meta-'+id);
+      const rt   = document.getElementById('runtime-'+id);
       if (!btn) return;
+      card.className = 'card' + (state ? ' on' : '');
+      btn.className  = 'toggle' + (state ? ' on' : '');
       btn.textContent = state ? 'BE' : 'KI';
-      btn.className   = 'toggle' + (state ? ' on' : '');
-      card.className  = 'card' + (state ? ' on' : '');
-      if (name) nm.textContent = name;
+      nm.textContent  = names[id];
+      if (state) {
+        startTimes[id] = Date.now();
+        meta.textContent = 'Fut...';
+        rt.className = 'runtime on';
+        showToast(names[id] + ' bekapcsolva');
+      } else {
+        meta.textContent = 'Utoljára: most';
+        rt.textContent = '';
+        rt.className = 'runtime';
+        showToast(names[id] + ' kikapcsolva');
+      }
     }
 
+    // Futási idő frissítés
+    setInterval(() => {
+      for (let i = 1; i <= RELAY_COUNT; i++) {
+        if (states[i]) {
+          const sec = Math.floor((Date.now() - startTimes[i]) / 1000);
+          const m = Math.floor(sec/60), s = sec%60;
+          const rt = document.getElementById('runtime-'+i);
+          if (rt) rt.textContent = m + 'p ' + s + 'mp';
+        }
+      }
+    }, 1000);
+
+    // Konfig panel
+    function openConfig(id) {
+      if (activeConfig === id) {
+        cfgPanel.style.display = 'none';
+        activeConfig = null;
+        return;
+      }
+      activeConfig = id;
+      cfgPanel.style.display = 'block';
+      cfgPanel.innerHTML = `
+        <div class="cfg-title">⚙ Beállítások – ${names[id]}</div>
+        <div class="cfg-row">
+          <span class="cfg-label">GPIO pin</span>
+          <span class="badge">GPIO ${[16,17,18,19][id-1]}</span>
+        </div>
+        <div class="cfg-row">
+          <span class="cfg-label">Állapot</span>
+          <span class="cfg-val">${states[id] ? '🟢 BE' : '⚫ KI'}</span>
+        </div>
+        <div style="margin-top:10px;font-size:0.78em;color:#64748b;margin-bottom:6px">Átnevezés</div>
+        <div class="inp-row">
+          <input class="inp" id="cfg-inp" value="${names[id]}" maxlength="31">
+          <button class="save-btn" onclick="saveName(${id})">Mentés</button>
+        </div>`;
+    }
+
+    function saveName(id) {
+      const val = document.getElementById('cfg-inp').value.trim();
+      if (!val) return;
+      names[id] = val;
+      document.getElementById('name-'+id).textContent = val;
+      socket.send(JSON.stringify({action:'rename', id:id, name:val}));
+      cfgPanel.style.display = 'none';
+      activeConfig = null;
+      showToast('Név elmentve: ' + val);
+    }
+
+    function logout() {
+      fetch('/logout', {method:'POST'}).then(() => window.location.href='/login');
+    }
+
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = '✓ ' + msg;
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2500);
+    }
+
+    // WebSocket
     const socket = new WebSocket(`ws://${location.hostname}:81`);
 
     socket.onopen = () => {
-      wsStatus.textContent = '● Csatlakozva';
-      wsStatus.className = 'connected';
+      wsDot.className = 'ws-dot on';
     };
-
     socket.onclose = () => {
-      wsStatus.textContent = '● Kapcsolat megszakadt';
-      wsStatus.className = '';
+      wsDot.className = 'ws-dot';
       setTimeout(() => location.reload(), 3000);
     };
-
     socket.onerror = () => {
-      wsStatus.textContent = '● Hiba';
+      wsDot.className = 'ws-dot';
     };
 
     socket.onmessage = (event) => {

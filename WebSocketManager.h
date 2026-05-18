@@ -13,6 +13,7 @@ private:
     DeviceManager& deviceManager;
     WifiManager& wifiManager;
     NTPManager* ntpManager = nullptr;
+    EepromManager* eeprom = nullptr;
 
     bool hasConnectedClients = false;
     unsigned long lastWifiUpdateTime = 0;
@@ -36,8 +37,8 @@ private:
         if (!hasConnectedClients || ntpManager == nullptr) return;
         StaticJsonDocument<128> doc;
         doc["type"]     = "time";
-        doc["datetime"] = ntpManager->getDateTimeISO();   // "2026-05-17T23:14:52"
-        doc["display"]  = ntpManager->getDisplayString(); // "2026.05.17. 23:14:52"
+        doc["datetime"] = ntpManager->getDateTimeISO();
+        doc["display"]  = ntpManager->getDisplayString();
         doc["synced"]   = ntpManager->isSynced();
         String json;
         serializeJson(doc, json);
@@ -68,7 +69,6 @@ private:
             serializeJson(doc, json);
             webSocket.sendTXT(clientNum, json);
         }
-        // Időt is küldjük azonnal csatlakozáskor
         if (ntpManager != nullptr) {
             StaticJsonDocument<128> doc;
             doc["type"]     = "time";
@@ -94,7 +94,7 @@ private:
 
         if (strcmp(action, "relay") == 0) {
             uint8_t id = doc["id"];
-            bool state  = doc["state"];
+            bool state = doc["state"];
             if (deviceManager.setRelay(id, state)) {
                 sendRelayStatus(id);
             }
@@ -103,6 +103,25 @@ private:
             uint8_t id = doc["id"];
             if (deviceManager.toggleRelay(id)) {
                 sendRelayStatus(id);
+            }
+        }
+        else if (strcmp(action, "rename") == 0) {
+            uint8_t id = doc["id"];
+            const char* name = doc["name"];
+            if (id >= 1 && id <= RELAY_COUNT && name) {
+                if (eeprom != nullptr) {
+                    eeprom->saveRelayName(id, String(name));
+                }
+                Serial.printf("[WebSocket] Átnevezés: Relé %d -> %s\n", id, name);
+                // Broadcast az új névvel közvetlenül – ne a DeviceManager statikus nevét küldje
+                StaticJsonDocument<128> renameResponse;
+                renameResponse["type"]  = "relay";
+                renameResponse["id"]    = id;
+                renameResponse["state"] = deviceManager.getState(id);
+                renameResponse["name"]  = name;
+                String renameJson;
+                serializeJson(renameResponse, renameJson);
+                webSocket.broadcastTXT(renameJson);
             }
         }
     }
@@ -140,9 +159,8 @@ public:
         });
     }
 
-    void setNTP(NTPManager& ntp) {
-        ntpManager = &ntp;
-    }
+    void setNTP(NTPManager& ntp) { ntpManager = &ntp; }
+    void setEeprom(EepromManager& em) { eeprom = &em; }
 
     void begin() {
         webSocket.begin();

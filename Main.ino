@@ -14,7 +14,7 @@ static WifiConfig wifiConfig("ARRIS-6D0C", "mQ7kNcL3hQcf");
 static EepromManager    eepromManager;
 static WifiManager      wifiManager(wifiConfig);
 static DeviceManager    deviceManager;
-static NTPManager       ntpManager(wifiManager);   // WiFi referencia átadva
+static NTPManager       ntpManager(wifiManager);
 static WebManager       webManager(wifiManager);
 static WebSocketManager webSocketManager(deviceManager, wifiManager);
 static SensorManager    sensorManager;
@@ -25,8 +25,9 @@ void setup() {
     deviceManager.setEeprom(eepromManager);
     deviceManager.begin();
     webManager.setEeprom(eepromManager);
+    webSocketManager.setEeprom(eepromManager);  // rename mentéshez
     wifiManager.begin();
-    ntpManager.begin();                    // WiFi után!
+    ntpManager.begin();
     webSocketManager.setNTP(ntpManager);
     webManager.begin();
     webSocketManager.begin();
