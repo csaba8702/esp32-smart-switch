@@ -6,21 +6,26 @@
 #include "DeviceManager.h"
 #include "WifiManager.h"
 #include "NTPManager.h"
+#include "ScheduleManager.h"
+
+class EepromManager;
 
 class WebSocketManager {
 private:
     WebSocketsServer webSocket{81};
-    DeviceManager& deviceManager;
-    WifiManager& wifiManager;
-    NTPManager* ntpManager = nullptr;
-    EepromManager* eeprom = nullptr;
+    DeviceManager&   deviceManager;
+    WifiManager&     wifiManager;
+    NTPManager*      ntpManager     = nullptr;
+    EepromManager*   eeprom         = nullptr;
+    ScheduleManager* scheduleManager = nullptr;
 
     bool hasConnectedClients = false;
     unsigned long lastWifiUpdateTime = 0;
     unsigned long lastTimeUpdateTime = 0;
     static const unsigned long WIFI_UPDATE_INTERVAL = 5000;
-    static const unsigned long TIME_UPDATE_INTERVAL = 1000;
+    static const unsigned long TIME_UPDATE_INTERVAL  = 1000;
 
+    // ----------------------------------------------------------------
     void sendWifiStatus() {
         if (!hasConnectedClients) return;
         StaticJsonDocument<200> doc;
@@ -28,8 +33,7 @@ private:
         doc["connected"] = wifiManager.isWifiConnected();
         doc["rssi"]      = wifiManager.getRSSI();
         doc["ip"]        = wifiManager.getLocalIP();
-        String json;
-        serializeJson(doc, json);
+        String json; serializeJson(doc, json);
         webSocket.broadcastTXT(json);
     }
 
@@ -37,116 +41,119 @@ private:
         if (!hasConnectedClients || ntpManager == nullptr) return;
         StaticJsonDocument<128> doc;
         doc["type"]     = "time";
-        doc["datetime"] = ntpManager->getDateTimeISO();
+        doc["datetime"] = ntpManager->getISOString();
         doc["display"]  = ntpManager->getDisplayString();
-        doc["synced"]   = ntpManager->isSynced();
-        String json;
-        serializeJson(doc, json);
+        String json; serializeJson(doc, json);
         webSocket.broadcastTXT(json);
     }
 
-    void sendRelayStatus(uint8_t id) {
-        if (!hasConnectedClients) return;
-        StaticJsonDocument<128> doc;
-        doc["type"]  = "relay";
-        doc["id"]    = id;
-        doc["state"] = deviceManager.getState(id);
-        doc["name"]  = deviceManager.getName(id);
-        String json;
-        serializeJson(doc, json);
-        webSocket.broadcastTXT(json);
-    }
+    // ----------------------------------------------------------------
+    // full_state küldés – relék + időzítések (ONE_TIME és WEEKLY egyben)
+    // ----------------------------------------------------------------
+    void sendAllStates(uint8_t num) {
+        StaticJsonDocument<2048> doc;
+        doc["type"] = "full_state";
 
-    void sendAllStates(uint8_t clientNum) {
-        sendWifiStatus();
-        for (int i = 1; i <= RELAY_COUNT; i++) {
-            StaticJsonDocument<128> doc;
-            doc["type"]  = "relay";
-            doc["id"]    = i;
-            doc["state"] = deviceManager.getState(i);
-            doc["name"]  = deviceManager.getName(i);
-            String json;
-            serializeJson(doc, json);
-            webSocket.sendTXT(clientNum, json);
-        }
-        if (ntpManager != nullptr) {
-            StaticJsonDocument<128> doc;
-            doc["type"]     = "time";
-            doc["datetime"] = ntpManager->getDateTimeISO();
-            doc["display"]  = ntpManager->getDisplayString();
-            doc["synced"]   = ntpManager->isSynced();
-            String json;
-            serializeJson(doc, json);
-            webSocket.sendTXT(clientNum, json);
-        }
-    }
-
-    void handleMessage(const String& message) {
-        StaticJsonDocument<200> doc;
-        DeserializationError err = deserializeJson(doc, message);
-        if (err) {
-            Serial.printf("[WebSocket] JSON hiba: %s\n", err.c_str());
-            return;
+        JsonArray relays = doc.createNestedArray("relays");
+        for (uint8_t i = 1; i <= RELAY_COUNT; i++) {
+            JsonObject ro = relays.createNestedObject();
+            ro["id"]     = i;
+            ro["name"]   = deviceManager.getName(i);
+            ro["state"]  = deviceManager.getState(i);
+            ro["uptime"] = deviceManager.getUptime(i, ntpManager ? (uint32_t)time(nullptr) : 0);
         }
 
-        const char* action = doc["action"];
-        if (!action) return;
+        if (scheduleManager != nullptr) {
+            JsonArray rules = doc.createNestedArray("schedules");
+            for (uint8_t r = 1; r <= RELAY_COUNT; r++) {
+                for (uint8_t s = 0; s < scheduleManager->getCount(r); s++) {
+                    const ScheduleRule& rule = scheduleManager->getRule(r, s);
+                    JsonObject ro = rules.createNestedObject();
+                    ro["relay"]     = r;
+                    ro["id"]        = rule.id;
+                    ro["type"]      = (uint8_t)rule.type;
+                    ro["action"]    = (uint8_t)rule.action;
+                    ro["endAction"] = (uint8_t)rule.endAction;
 
-        if (strcmp(action, "relay") == 0) {
-            uint8_t id = doc["id"];
-            bool state = doc["state"];
-            if (deviceManager.setRelay(id, state)) {
-                sendRelayStatus(id);
-            }
-        }
-        else if (strcmp(action, "toggle") == 0) {
-            uint8_t id = doc["id"];
-            if (deviceManager.toggleRelay(id)) {
-                sendRelayStatus(id);
-            }
-        }
-        else if (strcmp(action, "rename") == 0) {
-            uint8_t id = doc["id"];
-            const char* name = doc["name"];
-            if (id >= 1 && id <= RELAY_COUNT && name) {
-                if (eeprom != nullptr) {
-                    eeprom->saveRelayName(id, String(name));
+                    if (rule.type == ScheduleType::ONE_TIME) {
+                        ro["from"] = rule.validFrom;
+                        ro["to"]   = rule.validTo;
+                    } else {
+                        ro["dayMask"]  = rule.dayMask;
+                        ro["startMin"] = rule.startMin;
+                        ro["endMin"]   = rule.endMin;
+                    }
                 }
-                Serial.printf("[WebSocket] Átnevezés: Relé %d -> %s\n", id, name);
-                // Broadcast az új névvel közvetlenül – ne a DeviceManager statikus nevét küldje
-                StaticJsonDocument<128> renameResponse;
-                renameResponse["type"]  = "relay";
-                renameResponse["id"]    = id;
-                renameResponse["state"] = deviceManager.getState(id);
-                renameResponse["name"]  = name;
-                String renameJson;
-                serializeJson(renameResponse, renameJson);
-                webSocket.broadcastTXT(renameJson);
             }
+        }
+
+        String json; serializeJson(doc, json);
+        if (num == 50) webSocket.broadcastTXT(json);
+        else           webSocket.sendTXT(num, json);
+    }
+
+    // ----------------------------------------------------------------
+    // WebSocket üzenetek feldolgozása
+    // ----------------------------------------------------------------
+    void handleMessage(String message) {
+        StaticJsonDocument<512> doc;
+        if (deserializeJson(doc, message)) return;
+
+        String type = doc["type"].as<String>();
+
+        if (type == "toggle") {
+            deviceManager.toggleRelay(doc["id"].as<uint8_t>());
+            sendAllStates(50);
+        }
+        else if (type == "rename") {
+            deviceManager.renameRelay(doc["id"].as<uint8_t>(), doc["name"].as<String>());
+            sendAllStates(50);
+        }
+        // ---- Egyszeri időzítés hozzáadása ----
+        else if (type == "add_schedule_once") {
+            if (!scheduleManager) return;
+            ScheduleRule rule{};
+            rule.id        = doc["id"].as<uint32_t>();
+            rule.type      = ScheduleType::ONE_TIME;
+            rule.action    = (ScheduleAction)doc["action"].as<uint8_t>();
+            rule.endAction = (ScheduleAction)doc["endAction"].as<uint8_t>();
+            rule.validFrom = doc["from"].as<uint32_t>();
+            rule.validTo   = doc["to"].as<uint32_t>();
+            if (scheduleManager->addSchedule(doc["relay"].as<uint8_t>(), rule))
+                sendAllStates(50);
+        }
+        // ---- Heti ismétlődő időzítés hozzáadása ----
+        else if (type == "add_schedule_weekly") {
+            if (!scheduleManager) return;
+            ScheduleRule rule{};
+            rule.id        = doc["id"].as<uint32_t>();
+            rule.type      = ScheduleType::WEEKLY;
+            rule.action    = (ScheduleAction)doc["action"].as<uint8_t>();
+            rule.endAction = (ScheduleAction)doc["endAction"].as<uint8_t>();
+            rule.dayMask   = doc["dayMask"].as<uint8_t>();   // bit0=H..bit6=V
+            rule.startMin = doc["startMin"].as<uint16_t>(); // percek éjféltől
+            rule.endMin   = doc["endMin"].as<uint16_t>();
+            if (scheduleManager->addSchedule(doc["relay"].as<uint8_t>(), rule))
+                sendAllStates(50);
+        }
+        // ---- Törlés ----
+        else if (type == "delete_schedule") {
+            if (!scheduleManager) return;
+            if (scheduleManager->deleteSchedule(doc["relay"].as<uint8_t>(), doc["id"].as<uint32_t>()))
+                sendAllStates(50);
         }
     }
 
     void handleWebSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length) {
         switch (type) {
-            case WStype_DISCONNECTED:
-                Serial.printf("[WebSocket] Kliens #%u lekapcsolódott\n", num);
-                hasConnectedClients = webSocket.connectedClients() > 0;
-                break;
             case WStype_CONNECTED:
-                Serial.printf("[WebSocket] Kliens #%u kapcsolódott: %s\n",
-                    num, webSocket.remoteIP(num).toString().c_str());
                 hasConnectedClients = true;
                 sendAllStates(num);
                 break;
             case WStype_TEXT:
-                Serial.printf("[WebSocket] Üzenet: %s\n", (char*)payload);
                 handleMessage(String((char*)payload));
                 break;
-            case WStype_ERROR:
-                Serial.printf("[WebSocket] Hiba kliensnél #%u\n", num);
-                break;
-            default:
-                break;
+            default: break;
         }
     }
 
@@ -159,13 +166,20 @@ public:
         });
     }
 
-    void setNTP(NTPManager& ntp) { ntpManager = &ntp; }
-    void setEeprom(EepromManager& em) { eeprom = &em; }
+    void setNTP(NTPManager& ntp)         { ntpManager = &ntp; }
+    void setEeprom(EepromManager& em)    { eeprom = &em; }
 
-    void begin() {
-        webSocket.begin();
-        Serial.println("[WebSocket] Szerver elindult a 81-es porton");
+    void setScheduleManager(ScheduleManager& sm) {
+        scheduleManager = &sm;
+        scheduleManager->setOnStateChanged([this]() {
+            if (hasConnectedClients) {
+                Serial.println("[WS] Schedule valtozas -> full_state kuldese");
+                sendAllStates(50);
+            }
+        });
     }
+
+    void begin() { webSocket.begin(); }
 
     void handle() {
         webSocket.loop();

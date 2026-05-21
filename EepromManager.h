@@ -4,187 +4,225 @@
 #include <EEPROM.h>
 #include <Arduino.h>
 
-// -----------------------------------------------
-// EEPROM layout (összesen 512 byte)
-// -----------------------------------------------
-// [0]        magic byte (0xAB = érvényes adat)
-// [1..33]    WiFi SSID     (max 32 char + null)
-// [34..97]   WiFi password (max 63 char + null)
-// [98]       relay[0] defaultState
-// [99]       relay[1] defaultState
-// [100]      relay[2] defaultState
-// [101]      relay[3] defaultState
-// [102..133] relay[0] name (max 31 char + null)
-// [134..165] relay[1] name (max 31 char + null)
-// [166..197] relay[2] name (max 31 char + null)
-// [198..229] relay[3] name (max 31 char + null)
-// [230..261] web jelszó   (max 31 char + null)
-// [262..294] session token (max 32 char + null)
-// -----------------------------------------------
+#define EEPROM_SIZE              1024
+#define EEPROM_RELAY_COUNT       4
+#define EEPROM_MAGIC_ADDR        0
+#define EEPROM_MAGIC_VAL         0xAD   // 0xAB -> 0xAC: layout változott, automatikus újraformázás
+#define EEPROM_SSID_ADDR         1
+#define EEPROM_SSID_LEN          33
+#define EEPROM_PASS_ADDR         34
+#define EEPROM_PASS_LEN          64
+#define EEPROM_RELAY_STATE       98
+#define EEPROM_RELAY_NAME        102
+#define EEPROM_WEB_PASS          230
+#define EEPROM_TOKEN_ADDR        262
+#define EEPROM_TOKEN_LEN         33
+#define EEPROM_RELAY_START_TIME  295
 
-#define EEPROM_SIZE         512
-#define EEPROM_MAGIC        0xAB
-#define EEPROM_MAGIC_ADDR   0
-#define EEPROM_SSID_ADDR    1
-#define EEPROM_PASS_ADDR    34
-#define EEPROM_RELAY_STATE  98
-#define EEPROM_RELAY_NAME   102
-#define EEPROM_RELAY_COUNT  4
-#define EEPROM_NAME_LEN     32
-#define EEPROM_WEB_PASS     230
-#define EEPROM_TOKEN_ADDR   262
-#define EEPROM_TOKEN_LEN    33
+#define EEPROM_SCHEDULES_START   350
+#define MAX_RULES_PER_RELAY      4
+
+// ---------------------------------------------------------------
+// Rule bináris layout az EEPROM-ban – 16 byte / rule
+//
+//  [0..3]   id         uint32
+//  [4]      type       uint8    0=ONE_TIME, 1=WEEKLY
+//  [5]      dayMask    uint8    WEEKLY: bit0=H,bit1=K,bit2=Sz,bit3=Cs,bit4=P,bit5=Szo,bit6=V
+//                               ONE_TIME: 0x00
+//  [6..7]   startMin   uint16   percek éjféltől (0-1439); ONE_TIME: 0
+//  [8..9]   endMin     uint16   percek éjféltől (0-1439); ONE_TIME: 0
+//  [10..13] validFrom  uint32   ONE_TIME: epoch start;    WEEKLY: 0
+//  [14]     action     uint8    0=OFF, 1=ON
+//  [15]     active     uint8    0=inaktív, 1=aktív
+//
+// 4 relay × 4 rule × 16 byte = 256 byte → 350+256 = 606 < 1024 ✓
+// ---------------------------------------------------------------
+#define EEPROM_RULE_SIZE  17
 
 class EepromManager {
 private:
-    bool initialized = false;
+    void writeString(int offset, const String& str, int maxLen) {
+        int len = str.length();
+        if (len > maxLen - 1) len = maxLen - 1;
+        for (int i = 0; i < len; i++) EEPROM.write(offset + i, str[i]);
+        EEPROM.write(offset + len, '\0');
+    }
 
-    void writeString(int addr, const String& str, int maxLen) {
-        int len = min((int)str.length(), maxLen - 1);
-        for (int i = 0; i < len; i++) {
-            EEPROM.write(addr + i, str[i]);
+    String readString(int offset, int maxLen) {
+        String res = "";
+        for (int i = 0; i < maxLen; i++) {
+            char c = EEPROM.read(offset + i);
+            if (c == '\0' || (uint8_t)c == 0xFF) break;
+            res += c;
         }
-        EEPROM.write(addr + len, '\0');
+        res.trim();
+        return res;
     }
 
-    String readString(int addr, int maxLen) {
-        String result = "";
-        for (int i = 0; i < maxLen - 1; i++) {
-            char c = (char)EEPROM.read(addr + i);
-            if (c == '\0') break;
-            result += c;
-        }
-        return result;
+    void writeUint32(int offset, uint32_t val) {
+        EEPROM.write(offset,     (uint8_t)(val & 0xFF));
+        EEPROM.write(offset + 1, (uint8_t)((val >> 8) & 0xFF));
+        EEPROM.write(offset + 2, (uint8_t)((val >> 16) & 0xFF));
+        EEPROM.write(offset + 3, (uint8_t)((val >> 24) & 0xFF));
     }
 
-    bool isValid() {
-        return EEPROM.read(EEPROM_MAGIC_ADDR) == EEPROM_MAGIC;
+    uint32_t readUint32(int offset) {
+        uint32_t val = 0;
+        val |= (uint32_t)EEPROM.read(offset);
+        val |= (uint32_t)EEPROM.read(offset + 1) << 8;
+        val |= (uint32_t)EEPROM.read(offset + 2) << 16;
+        val |= (uint32_t)EEPROM.read(offset + 3) << 24;
+        return val;
     }
 
-    void setValid() {
-        EEPROM.write(EEPROM_MAGIC_ADDR, EEPROM_MAGIC);
+    void writeUint16(int offset, uint16_t val) {
+        EEPROM.write(offset,     (uint8_t)(val >> 8));
+        EEPROM.write(offset + 1, (uint8_t)(val & 0xFF));
+    }
+
+    uint16_t readUint16(int offset) {
+        return ((uint16_t)EEPROM.read(offset) << 8) | EEPROM.read(offset + 1);
+    }
+
+    int ruleBase(uint8_t relayId, uint8_t ruleIdx) {
+        return EEPROM_SCHEDULES_START + (((relayId - 1) * MAX_RULES_PER_RELAY) + ruleIdx) * EEPROM_RULE_SIZE;
     }
 
 public:
-    bool begin() {
-        if (!EEPROM.begin(EEPROM_SIZE)) {
-            Serial.println("[EEPROM] Inicializálás sikertelen!");
-            return false;
+    void begin() {
+        EEPROM.begin(EEPROM_SIZE);
+        if (EEPROM.read(EEPROM_MAGIC_ADDR) != EEPROM_MAGIC_VAL) {
+            clear();
         }
-        initialized = true;
-        if (!isValid()) {
-            Serial.println("[EEPROM] Nincs érvényes adat, alapértékek írása...");
-            writeDefaults();
-        } else {
-            Serial.println("[EEPROM] Érvényes adat betöltve.");
-        }
-        return true;
-    }
-
-    void writeDefaults() {
-        setValid();
-        writeString(EEPROM_SSID_ADDR, "", 32);
-        writeString(EEPROM_PASS_ADDR, "", 64);
-        for (int i = 0; i < EEPROM_RELAY_COUNT; i++) {
-            EEPROM.write(EEPROM_RELAY_STATE + i, 0);
-            writeString(EEPROM_RELAY_NAME + i * EEPROM_NAME_LEN,
-                        "Relé " + String(i + 1), EEPROM_NAME_LEN);
-        }
-        writeString(EEPROM_WEB_PASS, "admin", 32);
-        writeString(EEPROM_TOKEN_ADDR, "", EEPROM_TOKEN_LEN);
-        EEPROM.commit();
-        Serial.println("[EEPROM] Alapértékek elmentve.");
     }
 
     void clear() {
-        for (int i = 0; i < EEPROM_SIZE; i++) {
-            EEPROM.write(i, 0xFF);
-        }
+        for (int i = 0; i < EEPROM_SIZE; i++) EEPROM.write(i, 0);
+        EEPROM.write(EEPROM_MAGIC_ADDR, EEPROM_MAGIC_VAL);
         EEPROM.commit();
-        initialized = false;
-        Serial.println("[EEPROM] Törölve.");
+        Serial.println("[EEPROM] Memoria formazva, alaphelyzet.");
     }
 
-    // --- WiFi ---
-    void saveWifi(const String& ssid, const String& password) {
-        writeString(EEPROM_SSID_ADDR, ssid, 32);
-        writeString(EEPROM_PASS_ADDR, password, 64);
-        setValid();
+    bool isValid() { return EEPROM.read(EEPROM_MAGIC_ADDR) == EEPROM_MAGIC_VAL; }
+
+    // ---- WiFi ----
+    void saveWiFi(const String& ssid, const String& pass) {
+        writeString(EEPROM_SSID_ADDR, ssid, EEPROM_SSID_LEN);
+        writeString(EEPROM_PASS_ADDR, pass, EEPROM_PASS_LEN);
         EEPROM.commit();
-        Serial.println("[EEPROM] WiFi elmentve.");
     }
+    String loadSSID() { return readString(EEPROM_SSID_ADDR, EEPROM_SSID_LEN); }
+    String loadPass() { return readString(EEPROM_PASS_ADDR, EEPROM_PASS_LEN); }
 
-    String loadSSID()     { return readString(EEPROM_SSID_ADDR, 32); }
-    String loadPassword() { return readString(EEPROM_PASS_ADDR, 64); }
-
-    bool hasWifiCredentials() {
-        return loadSSID().length() > 0;
-    }
-
-    // --- Relé állapot ---
+    // ---- Relé állapot ----
     void saveRelayState(uint8_t id, bool state) {
         if (id < 1 || id > EEPROM_RELAY_COUNT) return;
         EEPROM.write(EEPROM_RELAY_STATE + (id - 1), state ? 1 : 0);
         EEPROM.commit();
     }
-
     bool loadRelayState(uint8_t id) {
         if (id < 1 || id > EEPROM_RELAY_COUNT) return false;
         return EEPROM.read(EEPROM_RELAY_STATE + (id - 1)) == 1;
     }
 
-    // --- Relé név ---
+    // ---- Relé név ----
     void saveRelayName(uint8_t id, const String& name) {
         if (id < 1 || id > EEPROM_RELAY_COUNT) return;
-        writeString(EEPROM_RELAY_NAME + (id - 1) * EEPROM_NAME_LEN,
-                    name, EEPROM_NAME_LEN);
+        writeString(EEPROM_RELAY_NAME + (id - 1) * 32, name, 32);
         EEPROM.commit();
     }
-
     String loadRelayName(uint8_t id) {
-        if (id < 1 || id > EEPROM_RELAY_COUNT) return "Relé " + String(id);
-        return readString(EEPROM_RELAY_NAME + (id - 1) * EEPROM_NAME_LEN,
-                          EEPROM_NAME_LEN);
+        if (id < 1 || id > EEPROM_RELAY_COUNT) return "";
+        return readString(EEPROM_RELAY_NAME + (id - 1) * 32, 32);
     }
 
-    // --- Web jelszó ---
+    // ---- Relé start idő ----
+    void saveRelayStartTime(uint8_t id, uint32_t timestamp) {
+        if (id < 1 || id > EEPROM_RELAY_COUNT) return;
+        writeUint32(EEPROM_RELAY_START_TIME + (id - 1) * 4, timestamp);
+        EEPROM.commit();
+    }
+    uint32_t loadRelayStartTime(uint8_t id) {
+        if (id < 1 || id > EEPROM_RELAY_COUNT) return 0;
+        return readUint32(EEPROM_RELAY_START_TIME + (id - 1) * 4);
+    }
+
+    // ---- Web jelszó / token ----
     void saveWebPassword(const String& pass) {
         writeString(EEPROM_WEB_PASS, pass, 32);
         EEPROM.commit();
-        Serial.println("[EEPROM] Web jelszó elmentve.");
     }
+    String loadWebPassword() { return readString(EEPROM_WEB_PASS, 32); }
 
-    String loadWebPassword() {
-        return readString(EEPROM_WEB_PASS, 32);
-    }
-
-    // --- Session token ---
     void saveToken(const String& token) {
         writeString(EEPROM_TOKEN_ADDR, token, EEPROM_TOKEN_LEN);
         EEPROM.commit();
     }
+    String loadToken() { return readString(EEPROM_TOKEN_ADDR, EEPROM_TOKEN_LEN); }
 
-    String loadToken() {
-        return readString(EEPROM_TOKEN_ADDR, EEPROM_TOKEN_LEN);
+    // ---- Időzítési szabály mentés ----
+    // type: 0=ONE_TIME, 1=WEEKLY
+    // dayMask: WEEKLY esetén bit0=H..bit6=V; ONE_TIME esetén 0
+    // startMin/endMin: percek éjféltől (0-1439); ONE_TIME esetén 0
+    // validFrom: ONE_TIME esetén epoch start; WEEKLY esetén 0
+    void saveRule(uint8_t relayId, uint8_t ruleIdx,
+                  uint32_t id,
+                  uint8_t  type,
+                  uint8_t  dayMask,
+                  uint16_t startMin,
+                  uint16_t endMin,
+                  uint32_t validFrom,
+                  uint8_t  action,
+                  uint8_t  endAction,
+                  bool     active)
+    {
+        if (relayId < 1 || relayId > EEPROM_RELAY_COUNT || ruleIdx >= MAX_RULES_PER_RELAY) return;
+        int b = ruleBase(relayId, ruleIdx);
+        writeUint32(b,       id);
+        EEPROM.write(b + 4,  type);
+        EEPROM.write(b + 5,  dayMask);
+        writeUint16(b + 6,   startMin);
+        writeUint16(b + 8,   endMin);
+        writeUint32(b + 10,  validFrom);
+        EEPROM.write(b + 14, action);
+        EEPROM.write(b + 15, endAction);
+        EEPROM.write(b + 16, active ? 1 : 0);
+        EEPROM.commit();
     }
 
-    // --- Debug ---
-    void dump() {
-        Serial.println("[EEPROM] === DUMP ===");
-        Serial.printf("  Magic:    0x%02X (%s)\n",
-            EEPROM.read(0), isValid() ? "OK" : "INVALID");
-        Serial.printf("  SSID:     %s\n", loadSSID().c_str());
-        Serial.printf("  Password: %s\n", loadPassword().c_str());
-        Serial.printf("  WebPass:  %s\n", loadWebPassword().c_str());
-        Serial.printf("  Token:    %s\n", loadToken().c_str());
-        for (int i = 1; i <= EEPROM_RELAY_COUNT; i++) {
-            Serial.printf("  Relé %d:   name='%s'  state=%s\n",
-                i,
-                loadRelayName(i).c_str(),
-                loadRelayState(i) ? "BE" : "KI");
-        }
-        Serial.println("[EEPROM] ============");
+    // ---- Időzítési szabály betöltés ----
+    void loadRule(uint8_t relayId, uint8_t ruleIdx,
+                  uint32_t& id,
+                  uint8_t&  type,
+                  uint8_t&  dayMask,
+                  uint16_t& startMin,
+                  uint16_t& endMin,
+                  uint32_t& validFrom,
+                  uint8_t&  action,
+                  uint8_t&  endAction,
+                  bool&     active)
+    {
+        if (relayId < 1 || relayId > EEPROM_RELAY_COUNT || ruleIdx >= MAX_RULES_PER_RELAY) return;
+        int b = ruleBase(relayId, ruleIdx);
+        id        = readUint32(b);
+        type      = EEPROM.read(b + 4);
+        dayMask   = EEPROM.read(b + 5);
+        startMin  = readUint16(b + 6);
+        endMin    = readUint16(b + 8);
+        validFrom = readUint32(b + 10);
+        action    = EEPROM.read(b + 14);
+        endAction = EEPROM.read(b + 15);
+        active    = (EEPROM.read(b + 16) == 1);
     }
+
+    void clearRule(uint8_t relayId, uint8_t ruleIdx) {
+        if (relayId < 1 || relayId > EEPROM_RELAY_COUNT || ruleIdx >= MAX_RULES_PER_RELAY) return;
+        int b = ruleBase(relayId, ruleIdx);
+        for (int i = 0; i < EEPROM_RULE_SIZE; i++) EEPROM.write(b + i, 0);
+        EEPROM.commit();
+    }
+
+    void dump() {}
 };
 
 #endif // EEPROM_MANAGER_H
