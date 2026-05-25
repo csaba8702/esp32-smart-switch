@@ -112,10 +112,17 @@ body{font-family:'Segoe UI',sans-serif;background:#eef2f7;margin:0;padding:16px;
   <button class="logout-btn" onclick="logout()">Kijelentkezes</button>
 </div>
 
-<!-- Idő / WiFi sáv -->
+<!-- Idő / WiFi / Memória sáv -->
 <div class="info-bar">
   <span id="time-display">Ido: Szinkronizalas...</span>
   <span id="wifi-display">WiFi: --</span>
+  <span id="mem-display" style="display:flex;align-items:center;gap:8px;font-size:13px">
+    <span>RAM:</span>
+    <span style="position:relative;display:inline-block;width:100px;height:12px;background:#e2e8f0;border-radius:6px;overflow:hidden">
+      <span id="mem-bar" style="position:absolute;left:0;top:0;height:100%;background:#10b981;border-radius:6px;transition:width .5s"></span>
+    </span>
+    <span id="mem-text">-- KB</span>
+  </span>
 </div>
 
 <!-- Relé kártyák -->
@@ -135,8 +142,8 @@ body{font-family:'Segoe UI',sans-serif;background:#eef2f7;margin:0;padding:16px;
   <div id="tab-once" class="tab-pane active">
     <div class="form-row">
       <div class="fg"><label>Cel eszkoz</label><select id="onceRelay"></select></div>
-      <div class="fg"><label>Kezdes</label><input type="datetime-local" id="onceFrom"></div>
-      <div class="fg"><label>Vege</label><input type="datetime-local" id="onceTo"></div>
+      <div class="fg"><label>Kezdes</label><input type="datetime-local" id="onceFrom" step="1"></div>
+      <div class="fg"><label>Vege</label><input type="datetime-local" id="onceTo" step="1"></div>
       <div class="fg"><label>Muvelet</label>
         <select id="onceAction">
           <option value="1">Bekapcsolas (ON)</option>
@@ -170,8 +177,8 @@ body{font-family:'Segoe UI',sans-serif;background:#eef2f7;margin:0;padding:16px;
           <button class="day-btn" data-bit="6" onclick="toggleDay(this)">V</button>
         </div>
       </div>
-      <div class="fg"><label>Kezdes (ora:perc)</label><input type="time" id="weekStart" value="08:00"></div>
-      <div class="fg"><label>Vege (ora:perc)</label><input type="time" id="weekEnd" value="09:00"></div>
+      <div class="fg"><label>Kezdes (oo:pp:mm)</label><input type="time" id="weekStart" value="08:00:00" step="1"></div>
+      <div class="fg"><label>Vege (oo:pp:mm)</label><input type="time" id="weekEnd" value="08:00:15" step="1"></div>
       <div class="fg"><label>Muvelet</label>
         <select id="weekAction">
           <option value="1">Bekapcsolas (ON)</option>
@@ -226,6 +233,7 @@ function initWebSocket() {
       renderSchedules(d.schedules);
       updateSelects(d.relays);
       startUptimeTimer();
+      updateMemory(d.heap_free, d.heap_total);
     } else if (d.type === 'time') {
       document.getElementById('time-display').innerText = 'Ido: ' + d.display;
     } else if (d.type === 'wifi') {
@@ -323,20 +331,27 @@ function getDayMask() {
 // Egyszeri időzítés
 // ================================================================
 function addOnce() {
-  const relay  = parseInt(document.getElementById('onceRelay').value);
-  const fromV  = document.getElementById('onceFrom').value;
-  const toV    = document.getElementById('onceTo').value;
-  const action = parseInt(document.getElementById('onceAction').value);
-  if (!fromV || !toV) { alert('Adj meg datumot!'); return; }
-  const fromEpoch = Math.floor(new Date(fromV).getTime() / 1000);
-  const toEpoch   = Math.floor(new Date(toV).getTime() / 1000);
-  if (fromEpoch >= toEpoch) { alert('A vegnek a kezdes utan kell lennie!'); return; }
+  const relay     = parseInt(document.getElementById('onceRelay').value);
+  const fromV     = document.getElementById('onceFrom').value;
+  const toV       = document.getElementById('onceTo').value;
+  const action    = parseInt(document.getElementById('onceAction').value);
   const endAction = parseInt(document.getElementById('onceEndAction').value);
+
+  if (!fromV || !toV) { alert('Adj meg datumot!'); return; }
+
+  // step="1" esetén a datetime-local értéke "YYYY-MM-DDTHH:MM:SS" formátumú,
+  // a Date() konstruktor ezt másodperc pontossággal értelmezi
+  const fromEpoch = Math.floor(new Date(fromV).getTime() / 1000);
+  const toEpoch   = Math.floor(new Date(toV).getTime()   / 1000);
+
+  if (fromEpoch >= toEpoch) { alert('A vegnek a kezdes utan kell lennie!'); return; }
+
   ws.send(JSON.stringify({
     type: 'add_schedule_once',
     id:   Math.floor(Date.now() / 1000),
     relay, from: fromEpoch, to: toEpoch, action, endAction
   }));
+
   document.getElementById('onceFrom').value = '';
   document.getElementById('onceTo').value   = '';
 }
@@ -348,6 +363,10 @@ function addWeekly() {
   const relay    = parseInt(document.getElementById('weekRelay').value);
   const startVal = document.getElementById('weekStart').value;
   const endVal   = document.getElementById('weekEnd').value;
+  const [sh2, sm2, ss2] = startVal.split(':').map(Number);
+  const [eh2, em2, es2] = endVal.split(':').map(Number);
+  const startSec = sh2 * 3600 + sm2 * 60 + (ss2 || 0);
+  const endSec   = eh2 * 3600 + em2 * 60 + (es2 || 0);
   const action   = parseInt(document.getElementById('weekAction').value);
   const dayMask  = getDayMask();
 
@@ -356,20 +375,19 @@ function addWeekly() {
 
   const [sh, sm] = startVal.split(':').map(Number);
   const [eh, em] = endVal.split(':').map(Number);
-  const startMin = sh * 60 + sm;
-  const endMin   = eh * 60 + em;
+  
 
   const endActionW = parseInt(document.getElementById('weekEndAction').value);
   ws.send(JSON.stringify({
     type: 'add_schedule_weekly',
     id:   Math.floor(Date.now() / 1000),
-    relay, dayMask, startMin, endMin, action, endAction: endActionW
+    relay, dayMask, startSec, endSec, action, endAction: endActionW
   }));
 
   // Reset
   document.querySelectorAll('.day-btn').forEach(b => b.classList.remove('sel'));
-  document.getElementById('weekStart').value = '08:00';
-  document.getElementById('weekEnd').value   = '09:00';
+  document.getElementById('weekStart').value = '08:00:00';
+  document.getElementById('weekEnd').value   = '08:00:15';
 }
 
 // ================================================================
@@ -383,6 +401,9 @@ function deleteSchedule(relay, id) {
 // ================================================================
 // Lista renderelése
 // ================================================================
+// ================================================================
+// Lista renderelése (JAVÍTOTT)
+// ================================================================
 function renderSchedules(schedules) {
   const tbody = document.getElementById('scheduleList');
   tbody.innerHTML = '';
@@ -390,38 +411,41 @@ function renderSchedules(schedules) {
     tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#94a3b8;">Nincsenek aktiv idozitesek.</td></tr>';
     return;
   }
+  
   schedules.forEach(s => {
     const name   = relayNamesMap[s.relay] || (s.relay + '. Rele');
-    const actStr = s.action === 1
-      ? '<span class="badge-on">&#x25CF; BE</span>'
-      : '<span class="badge-off">&#x25CF; KI</span>';
-    const endActStr = s.endAction === 2
-      ? '<span style="color:#64748b">&#x25CF; Marad</span>'
-      : s.endAction === 1
-        ? '<span class="badge-on">&#x25CF; BE</span>'
-        : '<span class="badge-off">&#x25CF; KI</span>';
+    const actStr = s.action === 1 ? '<span class="badge-on">&#x25CF; BE</span>' : '<span class="badge-off">&#x25CF; KI</span>';
+    const endActStr = s.endAction === 2 ? '<span style="color:#64748b">&#x25CF; Marad</span>' : (s.endAction === 1 ? '<span class="badge-on">&#x25CF; BE</span>' : '<span class="badge-off">&#x25CF; KI</span>');
 
     let typeStr, schedStr;
 
     if (s.type === 0) {
-      // ONE_TIME
-      typeStr  = '&#x1F4C5; Egyszeri';
-      const f  = new Date(s.from * 1000).toLocaleString('hu-HU');
-      const t  = new Date(s.to   * 1000).toLocaleString('hu-HU');
-      schedStr = f + ' &rarr;<br><small style="color:#64748b">' + t + '</small>';
+      typeStr = '&#x1F4C5; Egyszeri';
+      const fDate = new Date(s.from * 1000);
+      const tDate = new Date(s.to * 1000);
+      
+      // Másodperc formázása egységesen
+      const format = (d) => {
+        return d.toLocaleDateString('hu-HU') + ' ' + 
+               String(d.getHours()).padStart(2,'0') + ':' + 
+               String(d.getMinutes()).padStart(2,'0') + ':' + 
+               String(d.getSeconds()).padStart(2,'0');
+      };
+      
+      schedStr = format(fDate) + ' &rarr;<br><small style="color:#64748b">' + format(tDate) + '</small>';
     } else {
-      // WEEKLY
       typeStr = '&#x1F501; Heti';
-      const dayBadges = DAY_NAMES
-        .filter((_, i) => (s.dayMask >> i) & 1)
-        .map(d => '<span class="day-tag">' + d + '</span>')
-        .join('');
-      const sH = String(Math.floor(s.startMin / 60)).padStart(2,'0');
-      const sM = String(s.startMin % 60).padStart(2,'0');
-      const eH = String(Math.floor(s.endMin   / 60)).padStart(2,'0');
-      const eM = String(s.endMin   % 60).padStart(2,'0');
+      const dayBadges = DAY_NAMES.filter((_, i) => (s.dayMask >> i) & 1).map(d => '<span class="day-tag">' + d + '</span>').join('');
+      
+      const sH = String(Math.floor(s.startSec / 3600)).padStart(2,'0');
+      const sM = String(Math.floor((s.startSec % 3600) / 60)).padStart(2,'0');
+      const sS = String(s.startSec % 60).padStart(2,'0');
+      const eH = String(Math.floor(s.endSec / 3600)).padStart(2,'0');
+      const eM = String(Math.floor((s.endSec % 3600) / 60)).padStart(2,'0');
+      const eS = String(s.endSec % 60).padStart(2,'0');
+      
       schedStr = '<div class="badge-week">' + dayBadges + '</div>' +
-                 '<small>' + sH + ':' + sM + ' &rarr; ' + eH + ':' + eM + '</small>';
+                 '<small>' + sH + ':' + sM + ':' + sS + ' &rarr; ' + eH + ':' + eM + ':' + eS + '</small>';
     }
 
     const tr = document.createElement('tr');
@@ -443,6 +467,19 @@ function formatUptime(s) {
   let m = Math.floor(s / 60), h = Math.floor(m / 60);
   s %= 60; m %= 60;
   return h > 0 ? h + 'o ' + m + 'p' : m + 'p ' + s + 'm';
+}
+
+function updateMemory(free, total) {
+  if (!free || !total) return;
+  const usedPct = Math.round((1 - free / total) * 100);
+  const freeKB  = Math.round(free  / 1024);
+  const totalKB = Math.round(total / 1024);
+  // Szín: zöld < 60%, sárga 60-80%, piros > 80%
+  const color = usedPct < 60 ? '#10b981' : usedPct < 80 ? '#f59e0b' : '#ef4444';
+  const bar  = document.getElementById('mem-bar');
+  const text = document.getElementById('mem-text');
+  if (bar)  { bar.style.width = usedPct + '%'; bar.style.background = color; }
+  if (text) text.innerText = freeKB + ' / ' + totalKB + ' KB szabad (' + usedPct + '%)';
 }
 function logout() { fetch('/logout',{method:'POST'}).then(()=>location.reload()); }
 window.onload = initWebSocket;

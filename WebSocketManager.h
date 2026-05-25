@@ -54,6 +54,12 @@ private:
         StaticJsonDocument<2048> doc;
         doc["type"] = "full_state";
 
+        // ESP32 memória adatok – minden küldésnél frissen lekérve
+        doc["heap_free"]    = (uint32_t)ESP.getFreeHeap();
+        doc["heap_min"]     = (uint32_t)ESP.getMinFreeHeap();
+        doc["heap_total"]   = (uint32_t)ESP.getHeapSize();
+        doc["psram_free"]   = (uint32_t)ESP.getFreePsram();   // 0 ha nincs PSRAM
+
         JsonArray relays = doc.createNestedArray("relays");
         for (uint8_t i = 1; i <= RELAY_COUNT; i++) {
             JsonObject ro = relays.createNestedObject();
@@ -80,8 +86,8 @@ private:
                         ro["to"]   = rule.validTo;
                     } else {
                         ro["dayMask"]  = rule.dayMask;
-                        ro["startMin"] = rule.startMin;
-                        ro["endMin"]   = rule.endMin;
+                        ro["startSec"] = rule.startSec;
+                        ro["endSec"]   = rule.endSec;
                     }
                 }
             }
@@ -95,22 +101,23 @@ private:
     // ----------------------------------------------------------------
     // WebSocket üzenetek feldolgozása
     // ----------------------------------------------------------------
-    void handleMessage(String message) {
+    void handleMessage(const char* message) {
         StaticJsonDocument<512> doc;
         if (deserializeJson(doc, message)) return;
 
-        String type = doc["type"].as<String>();
+        // const char* direkt összehasonlítás – nincs String heap allokáció
+        const char* type = doc["type"] | "";
 
-        if (type == "toggle") {
+        if (strcmp(type, "toggle") == 0) {
             deviceManager.toggleRelay(doc["id"].as<uint8_t>());
             sendAllStates(50);
         }
-        else if (type == "rename") {
+        else if (strcmp(type, "rename") == 0) {
             deviceManager.renameRelay(doc["id"].as<uint8_t>(), doc["name"].as<String>());
             sendAllStates(50);
         }
         // ---- Egyszeri időzítés hozzáadása ----
-        else if (type == "add_schedule_once") {
+        else if (strcmp(type, "add_schedule_once") == 0) {
             if (!scheduleManager) return;
             ScheduleRule rule{};
             rule.id        = doc["id"].as<uint32_t>();
@@ -123,21 +130,21 @@ private:
                 sendAllStates(50);
         }
         // ---- Heti ismétlődő időzítés hozzáadása ----
-        else if (type == "add_schedule_weekly") {
+        else if (strcmp(type, "add_schedule_weekly") == 0) {
             if (!scheduleManager) return;
             ScheduleRule rule{};
             rule.id        = doc["id"].as<uint32_t>();
             rule.type      = ScheduleType::WEEKLY;
             rule.action    = (ScheduleAction)doc["action"].as<uint8_t>();
             rule.endAction = (ScheduleAction)doc["endAction"].as<uint8_t>();
-            rule.dayMask   = doc["dayMask"].as<uint8_t>();   // bit0=H..bit6=V
-            rule.startMin = doc["startMin"].as<uint16_t>(); // percek éjféltől
-            rule.endMin   = doc["endMin"].as<uint16_t>();
+            rule.dayMask  = doc["dayMask"].as<uint8_t>();   // bit0=H..bit6=V
+            rule.startSec = doc["startSec"].as<uint32_t>(); // másodpercek éjféltől
+            rule.endSec   = doc["endSec"].as<uint32_t>();
             if (scheduleManager->addSchedule(doc["relay"].as<uint8_t>(), rule))
                 sendAllStates(50);
         }
         // ---- Törlés ----
-        else if (type == "delete_schedule") {
+        else if (strcmp(type, "delete_schedule") == 0) {
             if (!scheduleManager) return;
             if (scheduleManager->deleteSchedule(doc["relay"].as<uint8_t>(), doc["id"].as<uint32_t>()))
                 sendAllStates(50);
@@ -151,7 +158,8 @@ private:
                 sendAllStates(num);
                 break;
             case WStype_TEXT:
-                handleMessage(String((char*)payload));
+                // A payload már null-terminált a könyvtárban, String másolat kerülendő
+                handleMessage(reinterpret_cast<const char*>(payload));
                 break;
             default: break;
         }

@@ -7,7 +7,7 @@
 #define EEPROM_SIZE              1024
 #define EEPROM_RELAY_COUNT       4
 #define EEPROM_MAGIC_ADDR        0
-#define EEPROM_MAGIC_VAL         0xAD   // 0xAB -> 0xAC: layout változott, automatikus újraformázás
+#define EEPROM_MAGIC_VAL         0xAE   // 0xAD -> 0xAE: startSec/endSec uint32, layout változott
 #define EEPROM_SSID_ADDR         1
 #define EEPROM_SSID_LEN          33
 #define EEPROM_PASS_ADDR         34
@@ -23,21 +23,21 @@
 #define MAX_RULES_PER_RELAY      4
 
 // ---------------------------------------------------------------
-// Rule bináris layout az EEPROM-ban – 16 byte / rule
+// Rule bináris layout – 21 byte / rule
 //
 //  [0..3]   id         uint32
 //  [4]      type       uint8    0=ONE_TIME, 1=WEEKLY
-//  [5]      dayMask    uint8    WEEKLY: bit0=H,bit1=K,bit2=Sz,bit3=Cs,bit4=P,bit5=Szo,bit6=V
-//                               ONE_TIME: 0x00
-//  [6..7]   startMin   uint16   percek éjféltől (0-1439); ONE_TIME: 0
-//  [8..9]   endMin     uint16   percek éjféltől (0-1439); ONE_TIME: 0
-//  [10..13] validFrom  uint32   ONE_TIME: epoch start;    WEEKLY: 0
-//  [14]     action     uint8    0=OFF, 1=ON
-//  [15]     active     uint8    0=inaktív, 1=aktív
+//  [5]      dayMask    uint8    WEEKLY: bit0=H..bit6=V; ONE_TIME: 0
+//  [6..9]   startSec   uint32   WEEKLY: mp éjféltől (0-86399); ONE_TIME: 0
+//  [10..13] endSec     uint32   WEEKLY: mp éjféltől (0-86399); ONE_TIME: 0
+//  [14..17] validFrom  uint32   ONE_TIME: epoch start; WEEKLY: 0
+//  [18]     action     uint8    0=OFF, 1=ON
+//  [19]     endAction  uint8    0=OFF, 1=ON, 2=KEEP
+//  [20]     active     uint8    0=inaktív, 1=aktív
 //
-// 4 relay × 4 rule × 16 byte = 256 byte → 350+256 = 606 < 1024 ✓
+// 4 relay × 4 rule × 21 byte = 336 byte → 350+336 = 686 < 1024 ✓
 // ---------------------------------------------------------------
-#define EEPROM_RULE_SIZE  17
+#define EEPROM_RULE_SIZE  21
 
 class EepromManager {
 private:
@@ -73,15 +73,6 @@ private:
         val |= (uint32_t)EEPROM.read(offset + 2) << 16;
         val |= (uint32_t)EEPROM.read(offset + 3) << 24;
         return val;
-    }
-
-    void writeUint16(int offset, uint16_t val) {
-        EEPROM.write(offset,     (uint8_t)(val >> 8));
-        EEPROM.write(offset + 1, (uint8_t)(val & 0xFF));
-    }
-
-    uint16_t readUint16(int offset) {
-        return ((uint16_t)EEPROM.read(offset) << 8) | EEPROM.read(offset + 1);
     }
 
     int ruleBase(uint8_t relayId, uint8_t ruleIdx) {
@@ -161,16 +152,14 @@ public:
     String loadToken() { return readString(EEPROM_TOKEN_ADDR, EEPROM_TOKEN_LEN); }
 
     // ---- Időzítési szabály mentés ----
-    // type: 0=ONE_TIME, 1=WEEKLY
-    // dayMask: WEEKLY esetén bit0=H..bit6=V; ONE_TIME esetén 0
-    // startMin/endMin: percek éjféltől (0-1439); ONE_TIME esetén 0
+    // startSec/endSec: WEEKLY esetén másodpercek éjféltől (0-86399); ONE_TIME esetén 0
     // validFrom: ONE_TIME esetén epoch start; WEEKLY esetén 0
     void saveRule(uint8_t relayId, uint8_t ruleIdx,
                   uint32_t id,
                   uint8_t  type,
                   uint8_t  dayMask,
-                  uint16_t startMin,
-                  uint16_t endMin,
+                  uint32_t startSec,
+                  uint32_t endSec,
                   uint32_t validFrom,
                   uint8_t  action,
                   uint8_t  endAction,
@@ -181,12 +170,12 @@ public:
         writeUint32(b,       id);
         EEPROM.write(b + 4,  type);
         EEPROM.write(b + 5,  dayMask);
-        writeUint16(b + 6,   startMin);
-        writeUint16(b + 8,   endMin);
-        writeUint32(b + 10,  validFrom);
-        EEPROM.write(b + 14, action);
-        EEPROM.write(b + 15, endAction);
-        EEPROM.write(b + 16, active ? 1 : 0);
+        writeUint32(b + 6,   startSec);
+        writeUint32(b + 10,  endSec);
+        writeUint32(b + 14,  validFrom);
+        EEPROM.write(b + 18, action);
+        EEPROM.write(b + 19, endAction);
+        EEPROM.write(b + 20, active ? 1 : 0);
         EEPROM.commit();
     }
 
@@ -195,8 +184,8 @@ public:
                   uint32_t& id,
                   uint8_t&  type,
                   uint8_t&  dayMask,
-                  uint16_t& startMin,
-                  uint16_t& endMin,
+                  uint32_t& startSec,
+                  uint32_t& endSec,
                   uint32_t& validFrom,
                   uint8_t&  action,
                   uint8_t&  endAction,
@@ -207,12 +196,12 @@ public:
         id        = readUint32(b);
         type      = EEPROM.read(b + 4);
         dayMask   = EEPROM.read(b + 5);
-        startMin  = readUint16(b + 6);
-        endMin    = readUint16(b + 8);
-        validFrom = readUint32(b + 10);
-        action    = EEPROM.read(b + 14);
-        endAction = EEPROM.read(b + 15);
-        active    = (EEPROM.read(b + 16) == 1);
+        startSec  = readUint32(b + 6);
+        endSec    = readUint32(b + 10);
+        validFrom = readUint32(b + 14);
+        action    = EEPROM.read(b + 18);
+        endAction = EEPROM.read(b + 19);
+        active    = (EEPROM.read(b + 20) == 1);
     }
 
     void clearRule(uint8_t relayId, uint8_t ruleIdx) {

@@ -68,7 +68,7 @@ void loop() {
     // Időzítési szabályok futtatása 5 másodpercenként
     if (ntpManager.isSynced()) {
         static unsigned long lastScheduleCheck = 0;
-        if (millis() - lastScheduleCheck >= 5000) {
+        if (millis() - lastScheduleCheck >= 1000) {
             time_t now = time(nullptr);
             scheduleManager.checkSchedules((uint32_t)now);
             lastScheduleCheck = millis();

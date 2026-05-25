@@ -17,14 +17,14 @@ enum class ScheduleType : uint8_t {
 enum class ScheduleAction : uint8_t {
     TURN_OFF = 0,
     TURN_ON  = 1,
-    KEEP     = 2    // Lejáratkor ne csináljon semmit
+    KEEP     = 2
 };
 
 struct ScheduleRule {
     uint32_t       id;
     ScheduleType   type;
-    ScheduleAction action;      // Induló művelet
-    ScheduleAction endAction;   // Lejárati művelet (TURN_OFF / TURN_ON / KEEP)
+    ScheduleAction action;
+    ScheduleAction endAction;
 
     // ONE_TIME
     uint32_t validFrom;
@@ -32,10 +32,10 @@ struct ScheduleRule {
     bool triggeredStart;
     bool triggeredEnd;
 
-    // WEEKLY
+    // WEEKLY – másodperc alapú (0-86399)
     uint8_t  dayMask;
-    uint16_t startMin;
-    uint16_t endMin;
+    uint32_t startSec;   // másodpercek éjféltől
+    uint32_t endSec;     // másodpercek éjféltől
     bool todayTriggeredStart;
     bool todayTriggeredEnd;
     uint8_t lastTriggeredDay;
@@ -54,16 +54,12 @@ private:
     std::function<void()> onStateChangedCallback = nullptr;
 
     void executeAction(uint8_t relayId, ScheduleAction action) {
-        if (action == ScheduleAction::KEEP) return; // Ne csináljon semmit
+        if (action == ScheduleAction::KEEP) return;
         bool target = (action == ScheduleAction::TURN_ON);
         if (deviceManager->getState(relayId) != target) {
             deviceManager->setRelay(relayId, target);
             Serial.printf("[Schedule] Rele %d -> %s\n", relayId, target ? "BE" : "KI");
         }
-    }
-
-    ScheduleAction inverseAction(ScheduleAction a) {
-        return (a == ScheduleAction::TURN_ON) ? ScheduleAction::TURN_OFF : ScheduleAction::TURN_ON;
     }
 
     bool isDayActive(uint8_t dayMask, int tmWday) {
@@ -111,12 +107,11 @@ inline void ScheduleManager::begin() {
     for (uint8_t r = 0; r < RELAY_COUNT; r++) {
         scheduleCounts[r] = 0;
         for (uint8_t s = 0; s < MAX_SCHEDULES_PER_RELAY; s++) {
-            uint32_t id, validFrom;
+            uint32_t id, validFrom, startSec, endSec;
             uint8_t  type, dayMask, action, endAction;
-            uint16_t startMin, endMin;
             bool     active;
 
-            eeprom->loadRule(r + 1, s, id, type, dayMask, startMin, endMin, validFrom, action, endAction, active);
+            eeprom->loadRule(r + 1, s, id, type, dayMask, startSec, endSec, validFrom, action, endAction, active);
 
             if (id == 0 || id == 0xFFFFFFFF || !active) continue;
 
@@ -127,15 +122,21 @@ inline void ScheduleManager::begin() {
             rule.endAction = (ScheduleAction)endAction;
             rule.isActive  = true;
             rule.dayMask   = dayMask;
-            rule.startMin  = startMin;
-            rule.endMin    = endMin;
-            rule.validFrom = validFrom;
 
             if (rule.type == ScheduleType::ONE_TIME) {
-                rule.validTo  = ((uint32_t)startMin << 16) | endMin;
-                rule.startMin = 0;
-                rule.endMin   = 0;
+                // ONE_TIME: validFrom=epoch start, startSec/endSec = validTo high/low
+                rule.validFrom = validFrom;
+                rule.validTo   = ((uint32_t)startSec << 16) | (endSec & 0xFFFF);
+                rule.startSec  = 0;
+                rule.endSec    = 0;
+            } else {
+                // WEEKLY: másodperc alapú
+                rule.startSec  = startSec;
+                rule.endSec    = endSec;
+                rule.validFrom = 0;
+                rule.validTo   = 0;
             }
+
             rule.triggeredStart      = false;
             rule.triggeredEnd        = false;
             rule.todayTriggeredStart = false;
@@ -166,20 +167,20 @@ inline bool ScheduleManager::addSchedule(uint8_t relayId, const ScheduleRule& ne
         uint8_t  dayMask   = newRule.dayMask;
         uint8_t  action    = (uint8_t)newRule.action;
         uint8_t  endAction = (uint8_t)newRule.endAction;
-        uint32_t validFrom;
-        uint16_t sMin, eMin;
+        uint32_t validFrom, startSec, endSec;
 
         if (newRule.type == ScheduleType::ONE_TIME) {
+            // validTo uint32-t két uint16-ra bontjuk a startSec/endSec mezőkbe
             validFrom = newRule.validFrom;
-            sMin      = (uint16_t)(newRule.validTo >> 16);
-            eMin      = (uint16_t)(newRule.validTo & 0xFFFF);
+            startSec  = (newRule.validTo >> 16) & 0xFFFF;
+            endSec    = newRule.validTo & 0xFFFF;
             dayMask   = 0x00;
         } else {
             validFrom = 0;
-            sMin      = newRule.startMin;
-            eMin      = newRule.endMin;
+            startSec  = newRule.startSec;
+            endSec    = newRule.endSec;
         }
-        eeprom->saveRule(relayId, slot, newRule.id, type, dayMask, sMin, eMin, validFrom, action, endAction, true);
+        eeprom->saveRule(relayId, slot, newRule.id, type, dayMask, startSec, endSec, validFrom, action, endAction, true);
     }
     return true;
 }
@@ -199,19 +200,18 @@ inline bool ScheduleManager::deleteSchedule(uint8_t relayId, uint32_t ruleId) {
                 uint8_t  dayMask   = r.dayMask;
                 uint8_t  action    = (uint8_t)r.action;
                 uint8_t  endAction = (uint8_t)r.endAction;
-                uint32_t validFrom;
-                uint16_t sMin, eMin;
+                uint32_t validFrom, startSec, endSec;
                 if (r.type == ScheduleType::ONE_TIME) {
                     validFrom = r.validFrom;
-                    sMin      = (uint16_t)(r.validTo >> 16);
-                    eMin      = (uint16_t)(r.validTo & 0xFFFF);
+                    startSec  = (r.validTo >> 16) & 0xFFFF;
+                    endSec    = r.validTo & 0xFFFF;
                     dayMask   = 0x00;
                 } else {
                     validFrom = 0;
-                    sMin      = r.startMin;
-                    eMin      = r.endMin;
+                    startSec  = r.startSec;
+                    endSec    = r.endSec;
                 }
-                eeprom->saveRule(relayId, j, r.id, type, dayMask, sMin, eMin, validFrom, action, endAction, true);
+                eeprom->saveRule(relayId, j, r.id, type, dayMask, startSec, endSec, validFrom, action, endAction, true);
             }
         }
         scheduleCounts[rIdx]--;
@@ -232,7 +232,8 @@ inline void ScheduleManager::checkSchedules(uint32_t currentEpoch) {
     struct tm now;
     time_t t = (time_t)currentEpoch;
     localtime_r(&t, &now);
-    uint16_t currentMin = now.tm_hour * 60 + now.tm_min;
+    // Másodpercek éjféltől – helyi idő alapján
+    uint32_t currentSec = now.tm_hour * 3600 + now.tm_min * 60 + now.tm_sec;
     int      todayWday  = now.tm_wday;
 
     for (uint8_t r = 0; r < RELAY_COUNT; r++) {
@@ -244,6 +245,7 @@ inline void ScheduleManager::checkSchedules(uint32_t currentEpoch) {
             ScheduleRule& rule = schedules[r][s];
             if (!rule.isActive) continue;
 
+            // ---- ONE_TIME ----------------------------------------
             if (rule.type == ScheduleType::ONE_TIME) {
                 if (currentEpoch >= rule.validFrom && currentEpoch < rule.validTo && !rule.triggeredStart) {
                     rule.triggeredStart = true;
@@ -252,18 +254,19 @@ inline void ScheduleManager::checkSchedules(uint32_t currentEpoch) {
                 }
                 if (currentEpoch >= rule.validTo && !rule.triggeredEnd) {
                     rule.triggeredEnd = true;
-                    // endAction alapján dönt – KEEP esetén nem kapcsol
-                    ScheduleAction endAct = rule.endAction;
-                    if (endAct == ScheduleAction::KEEP) {
+                    if (rule.endAction == ScheduleAction::KEEP) {
                         Serial.printf("[Schedule] Rele %d – lejart, allapot marad\n", physId);
                     } else {
-                        executeAction(physId, endAct);
+                        executeAction(physId, rule.endAction);
                     }
                     anyChange = true;
                     toDelete[delCount++] = rule.id;
                 }
             }
+
+            // ---- WEEKLY – másodperc alapú -------------------------
             else if (rule.type == ScheduleType::WEEKLY) {
+                // Napi trigger reset ha új nap
                 if (rule.lastTriggeredDay != (uint8_t)todayWday) {
                     rule.todayTriggeredStart = false;
                     rule.todayTriggeredEnd   = false;
@@ -273,10 +276,11 @@ inline void ScheduleManager::checkSchedules(uint32_t currentEpoch) {
                 bool dayOk = isDayActive(rule.dayMask, todayWday);
                 if (!dayOk) continue;
 
-                bool overnight = (rule.endMin < rule.startMin);
+                // Éjfél-átnyúlás kezelése (pl. 23:50:00 - 00:10:00)
+                bool overnight = (rule.endSec < rule.startSec);
                 bool inWindow  = overnight
-                    ? (currentMin >= rule.startMin || currentMin < rule.endMin)
-                    : (currentMin >= rule.startMin && currentMin < rule.endMin);
+                    ? (currentSec >= rule.startSec || currentSec < rule.endSec)
+                    : (currentSec >= rule.startSec && currentSec < rule.endSec);
 
                 if (inWindow && !rule.todayTriggeredStart) {
                     rule.todayTriggeredStart = true;
@@ -286,12 +290,10 @@ inline void ScheduleManager::checkSchedules(uint32_t currentEpoch) {
                 }
                 if (!inWindow && rule.todayTriggeredStart && !rule.todayTriggeredEnd) {
                     rule.todayTriggeredEnd = true;
-                    // WEEKLY endAction: KEEP esetén marad az állapot
-                    ScheduleAction endAct = rule.endAction;
-                    if (endAct == ScheduleAction::KEEP) {
+                    if (rule.endAction == ScheduleAction::KEEP) {
                         Serial.printf("[Schedule] Rele %d – heti lejart, allapot marad\n", physId);
                     } else {
-                        executeAction(physId, endAct);
+                        executeAction(physId, rule.endAction);
                     }
                     anyChange = true;
                 }
