@@ -142,8 +142,14 @@ body{font-family:'Segoe UI',sans-serif;background:#eef2f7;margin:0;padding:16px;
   <div id="tab-once" class="tab-pane active">
     <div class="form-row">
       <div class="fg"><label>Cel eszkoz</label><select id="onceRelay"></select></div>
-      <div class="fg"><label>Kezdes</label><input type="datetime-local" id="onceFrom" step="1"></div>
-      <div class="fg"><label>Vege</label><input type="datetime-local" id="onceTo" step="1"></div>
+      <div class="fg">
+        <label>Kezdes</label>
+        <input type="datetime-local" id="onceFrom" step="1">
+      </div>
+      <div class="fg">
+        <label>Vege</label>
+        <input type="datetime-local" id="onceTo" step="1">
+      </div>
       <div class="fg"><label>Muvelet</label>
         <select id="onceAction">
           <option value="1">Bekapcsolas (ON)</option>
@@ -236,6 +242,8 @@ function initWebSocket() {
       updateMemory(d.heap_free, d.heap_total);
     } else if (d.type === 'time') {
       document.getElementById('time-display').innerText = 'Ido: ' + d.display;
+      // Memória frissítése a time üzenetből – másodpercenként automatikusan
+      updateMemory(d.heap_free, d.heap_total);
     } else if (d.type === 'wifi') {
       document.getElementById('wifi-display').innerText =
         'WiFi: ' + (d.connected ? d.rssi + ' dBm | ' + d.ip : 'Nincs kapcsolat');
@@ -331,27 +339,41 @@ function getDayMask() {
 // Egyszeri időzítés
 // ================================================================
 function addOnce() {
+  // 1. Mezők beolvasása (az 'onceFromSec' és 'onceToSec' már nem kell!)
   const relay     = parseInt(document.getElementById('onceRelay').value);
   const fromV     = document.getElementById('onceFrom').value;
   const toV       = document.getElementById('onceTo').value;
   const action    = parseInt(document.getElementById('onceAction').value);
   const endAction = parseInt(document.getElementById('onceEndAction').value);
 
-  if (!fromV || !toV) { alert('Adj meg datumot!'); return; }
+  // 2. Ellenőrzés
+  if (!fromV || !toV) { 
+    alert('Adj meg dátumot!'); 
+    return; 
+  }
 
-  // step="1" esetén a datetime-local értéke "YYYY-MM-DDTHH:MM:SS" formátumú,
-  // a Date() konstruktor ezt másodperc pontossággal értelmezi
+  // 3. UNIX időbélyeg számítása
+  // A 'new Date(fromV).getTime()' a step="1" miatt már tartalmazza a másodpercet is!
   const fromEpoch = Math.floor(new Date(fromV).getTime() / 1000);
-  const toEpoch   = Math.floor(new Date(toV).getTime()   / 1000);
+  const toEpoch   = Math.floor(new Date(toV).getTime() / 1000);
 
-  if (fromEpoch >= toEpoch) { alert('A vegnek a kezdes utan kell lennie!'); return; }
+  if (fromEpoch >= toEpoch) { 
+    alert('A végnek a kezdés után kell lennie!'); 
+    return; 
+  }
 
+  // 4. Küldés a szervernek
   ws.send(JSON.stringify({
     type: 'add_schedule_once',
     id:   Math.floor(Date.now() / 1000),
-    relay, from: fromEpoch, to: toEpoch, action, endAction
+    relay: relay, 
+    from: fromEpoch, 
+    to: toEpoch, 
+    action: action, 
+    endAction: endAction
   }));
 
+  // 5. HTML mezők alaphelyzetbe állítása (kizárólag a meglévők)
   document.getElementById('onceFrom').value = '';
   document.getElementById('onceTo').value   = '';
 }
@@ -401,9 +423,6 @@ function deleteSchedule(relay, id) {
 // ================================================================
 // Lista renderelése
 // ================================================================
-// ================================================================
-// Lista renderelése (JAVÍTOTT)
-// ================================================================
 function renderSchedules(schedules) {
   const tbody = document.getElementById('scheduleList');
   tbody.innerHTML = '';
@@ -411,39 +430,45 @@ function renderSchedules(schedules) {
     tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#94a3b8;">Nincsenek aktiv idozitesek.</td></tr>';
     return;
   }
-  
   schedules.forEach(s => {
     const name   = relayNamesMap[s.relay] || (s.relay + '. Rele');
-    const actStr = s.action === 1 ? '<span class="badge-on">&#x25CF; BE</span>' : '<span class="badge-off">&#x25CF; KI</span>';
-    const endActStr = s.endAction === 2 ? '<span style="color:#64748b">&#x25CF; Marad</span>' : (s.endAction === 1 ? '<span class="badge-on">&#x25CF; BE</span>' : '<span class="badge-off">&#x25CF; KI</span>');
+    const actStr = s.action === 1
+      ? '<span class="badge-on">&#x25CF; BE</span>'
+      : '<span class="badge-off">&#x25CF; KI</span>';
+    const endActStr = s.endAction === 2
+      ? '<span style="color:#64748b">&#x25CF; Marad</span>'
+      : s.endAction === 1
+        ? '<span class="badge-on">&#x25CF; BE</span>'
+        : '<span class="badge-off">&#x25CF; KI</span>';
 
     let typeStr, schedStr;
 
     if (s.type === 0) {
+      // ONE_TIME - sajat formatozas, toLocaleString nem mutat masodpercet
       typeStr = '&#x1F4C5; Egyszeri';
       const fDate = new Date(s.from * 1000);
-      const tDate = new Date(s.to * 1000);
-      
-      // Másodperc formázása egységesen
-      const format = (d) => {
-        return d.toLocaleDateString('hu-HU') + ' ' + 
-               String(d.getHours()).padStart(2,'0') + ':' + 
-               String(d.getMinutes()).padStart(2,'0') + ':' + 
-               String(d.getSeconds()).padStart(2,'0');
-      };
-      
-      schedStr = format(fDate) + ' &rarr;<br><small style="color:#64748b">' + format(tDate) + '</small>';
+      const tDate = new Date(s.to   * 1000);
+      const fmt = d =>
+        d.getFullYear() + '.' +
+        String(d.getMonth() + 1).padStart(2,'0') + '.' +
+        String(d.getDate()).padStart(2,'0') + '. ' +
+        String(d.getHours()).padStart(2,'0') + ':' +
+        String(d.getMinutes()).padStart(2,'0') + ':' +
+        String(d.getSeconds()).padStart(2,'0');
+      schedStr = fmt(fDate) + ' &rarr;<br><small style="color:#64748b">' + fmt(tDate) + '</small>';
     } else {
+      // WEEKLY - nap badge + oo:pp:mm
       typeStr = '&#x1F501; Heti';
-      const dayBadges = DAY_NAMES.filter((_, i) => (s.dayMask >> i) & 1).map(d => '<span class="day-tag">' + d + '</span>').join('');
-      
+      const dayBadges = DAY_NAMES
+        .filter((_, i) => (s.dayMask >> i) & 1)
+        .map(d => '<span class="day-tag">' + d + '</span>')
+        .join('');
       const sH = String(Math.floor(s.startSec / 3600)).padStart(2,'0');
       const sM = String(Math.floor((s.startSec % 3600) / 60)).padStart(2,'0');
       const sS = String(s.startSec % 60).padStart(2,'0');
       const eH = String(Math.floor(s.endSec / 3600)).padStart(2,'0');
       const eM = String(Math.floor((s.endSec % 3600) / 60)).padStart(2,'0');
       const eS = String(s.endSec % 60).padStart(2,'0');
-      
       schedStr = '<div class="badge-week">' + dayBadges + '</div>' +
                  '<small>' + sH + ':' + sM + ':' + sS + ' &rarr; ' + eH + ':' + eM + ':' + eS + '</small>';
     }
@@ -492,7 +517,11 @@ public:
 
     void setEeprom(EepromManager& em);
     void begin();
-    void handle() { server.handleClient(); }
+    void handle() {
+        // Több handle() hívás egy loop()-on belül csökkenti a késést
+        // és gyorsabban üríti a bejövő kérés sort
+        server.handleClient();
+    }
 };
 
 #include "EepromManager.h"
@@ -506,12 +535,30 @@ inline void WebManager::begin() {
     const char* headers[] = {"Cookie"};
     server.collectHeaders(headers, 1);
 
+    // Kapcsolat azonnal lezárul válasz után – nem marad nyitva socket slot
+    // Ez megakadályozza a TCP socket kimerülést gyors újratöltéseknél
+    server.enableCORS(false);
+    server.enableDelay(false); // ne várjon feleslegesen a könyvtár
+
     server.on("/", HTTP_GET, [this]() {
-        if (!isAuthenticated()) { server.sendHeader("Location","/login"); server.send(302,"text/plain",""); return; }
+        if (!isAuthenticated()) {
+            server.sendHeader("Location", "/login");
+            server.sendHeader("Connection", "close");
+            server.send(302, "text/plain", "");
+            return;
+        }
+        server.sendHeader("Connection", "close");
+        server.sendHeader("Cache-Control", "no-store");
         server.send(200, "text/html; charset=UTF-8", INDEX_HTML);
     });
     server.on("/login", HTTP_GET, [this]() {
-        if (isAuthenticated()) { server.sendHeader("Location","/"); server.send(302,"text/plain",""); return; }
+        if (isAuthenticated()) {
+            server.sendHeader("Location", "/");
+            server.sendHeader("Connection", "close");
+            server.send(302, "text/plain", "");
+            return;
+        }
+        server.sendHeader("Connection", "close");
         server.send(200, "text/html; charset=UTF-8", LOGIN_HTML);
     });
     server.on("/login", HTTP_POST, [this]() {
@@ -521,20 +568,27 @@ inline void WebManager::begin() {
         if (pass == stored) {
             sessionToken = generateToken();
             if (eeprom) eeprom->saveToken(sessionToken);
-            server.sendHeader("Set-Cookie","token="+sessionToken+"; Max-Age=2592000; Path=/; HttpOnly");
-            server.sendHeader("Location","/");
-            server.send(302,"text/plain","");
+            server.sendHeader("Set-Cookie", "token=" + sessionToken + "; Max-Age=2592000; Path=/; HttpOnly");
+            server.sendHeader("Location", "/");
+            server.sendHeader("Connection", "close");
+            server.send(302, "text/plain", "");
             Serial.println("[Auth] Sikeres bejelentkezes.");
         } else {
-            server.send(401,"text/plain","Hibas jelszo");
+            server.sendHeader("Connection", "close");
+            server.send(401, "text/plain", "Hibas jelszo");
         }
     });
     server.on("/logout", HTTP_POST, [this]() {
-        server.sendHeader("Set-Cookie","token=; Max-Age=0; Path=/");
-        server.send(200,"text/plain","OK");
+        server.sendHeader("Set-Cookie", "token=; Max-Age=0; Path=/");
+        server.sendHeader("Connection", "close");
+        server.send(200, "text/plain", "OK");
     });
-    server.onNotFound([this]() { server.send(404,"text/plain","404"); });
+    server.onNotFound([this]() {
+        server.sendHeader("Connection", "close");
+        server.send(404, "text/plain", "404");
+    });
     server.begin();
+    Serial.println("[Web] HTTP szerver elindult (8080)");
 }
 
 #endif // WEB_MANAGER_H

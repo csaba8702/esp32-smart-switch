@@ -39,10 +39,14 @@ private:
 
     void sendTimeUpdate() {
         if (!hasConnectedClients || ntpManager == nullptr) return;
-        StaticJsonDocument<128> doc;
-        doc["type"]     = "time";
-        doc["datetime"] = ntpManager->getISOString();
-        doc["display"]  = ntpManager->getDisplayString();
+        StaticJsonDocument<192> doc;
+        doc["type"]      = "time";
+        doc["datetime"]  = ntpManager->getISOString();
+        doc["display"]   = ntpManager->getDisplayString();
+        // Memória adatok a time üzenetbe – így másodpercenként frissül
+        // a kijelző anélkül, hogy külön üzenetre lenne szükség
+        doc["heap_free"]  = (uint32_t)ESP.getFreeHeap();
+        doc["heap_total"] = (uint32_t)ESP.getHeapSize();
         String json; serializeJson(doc, json);
         webSocket.broadcastTXT(json);
     }
