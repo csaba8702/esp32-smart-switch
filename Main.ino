@@ -70,7 +70,15 @@ void setup() {
 
     // Összekötjük a függőségeket
     deviceManager.setEeprom(eepromManager);
-    eepromManager.saveWebPassword("admin");
+    // Jelszó csak akkor kerül alapértelmezettre ha az EEPROM még üres/friss.
+    // Ha itt mindig felülírnánk, jelszócsere után reboot = visszaáll admin-ra!
+    {
+        String savedPass = eepromManager.loadWebPassword();
+        if (savedPass.isEmpty()) {
+            eepromManager.saveWebPassword("admin");
+            Serial.println("[Auth] Alapertelmezett jelszo beallitva: admin");
+        }
+    }
     deviceManager.begin();
 
     webManager.setEeprom(eepromManager);

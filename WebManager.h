@@ -35,6 +35,14 @@ private:
         return getCookieValue(server.header("Cookie"), "token") == sessionToken;
     }
 
+    // Jelszó lekérése EEPROM-ból.
+    // Ha nincs EEPROM, üres stringet ad vissza -> bejelentkezés nem lehetséges.
+    // Az "admin" alapértelmezett jelszót a Main.ino állítja be első indításkor.
+    String getStoredPassword() {
+        if (eeprom == nullptr) return "";
+        return eeprom->loadWebPassword();
+    }
+
     // ----------------------------------------------------------------
     const char* LOGIN_HTML = R"rawliteral(
 <!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bejelentkezes</title>
@@ -73,6 +81,24 @@ body{font-family:'Segoe UI',sans-serif;background:#eef2f7;margin:0;padding:16px;
 .switch-btn{width:100%;padding:11px;border:none;border-radius:6px;color:#fff;font-weight:700;font-size:15px;cursor:pointer;transition:.15s}
 .switch-btn.on{background:#ef4444}.switch-btn.off{background:#10b981}
 .logout-btn{background:#64748b;color:#fff;border:none;padding:7px 14px;border-radius:4px;cursor:pointer}
+.chpass-btn{background:#475569;color:#fff;border:none;padding:7px 14px;border-radius:4px;cursor:pointer;margin-right:6px}
+
+/* ---- Jelszócsere modal ---- */
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;justify-content:center;align-items:center}
+.modal-overlay.open{display:flex}
+.modal-box{background:#fff;border-radius:10px;padding:28px 24px;width:100%;max-width:360px;box-shadow:0 8px 32px rgba(0,0,0,.2)}
+.modal-box h3{margin:0 0 20px;color:#1e293b;font-size:18px}
+.modal-field{display:flex;flex-direction:column;gap:5px;margin-bottom:14px}
+.modal-field label{font-size:12px;font-weight:700;color:#475569}
+.modal-field input{padding:9px 12px;border:1px solid #cbd5e1;border-radius:5px;font-size:14px;width:100%}
+.modal-field input:focus{outline:none;border-color:#2563eb;box-shadow:0 0 0 2px rgba(37,99,235,.15)}
+.modal-actions{display:flex;gap:8px;margin-top:8px}
+.modal-save{flex:1;background:#2563eb;color:#fff;border:none;padding:10px;border-radius:5px;font-weight:700;cursor:pointer;font-size:14px}
+.modal-save:hover{background:#1d4ed8}
+.modal-cancel{flex:1;background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;padding:10px;border-radius:5px;font-weight:700;cursor:pointer;font-size:14px}
+.modal-cancel:hover{background:#e2e8f0}
+.modal-msg{font-size:13px;margin-top:10px;min-height:18px;text-align:center;font-weight:600}
+.modal-msg.ok{color:#10b981}.modal-msg.err{color:#ef4444}
 
 /* ---- Időzítő szekció ---- */
 .sched-section{background:#fff;padding:20px;border-radius:8px;margin-top:4px}
@@ -109,7 +135,34 @@ body{font-family:'Segoe UI',sans-serif;background:#eef2f7;margin:0;padding:16px;
 <!-- Fejléc -->
 <div class="header">
   <h1>&#x26A1; Smart Relay System</h1>
-  <button class="logout-btn" onclick="logout()">Kijelentkezes</button>
+  <div>
+    <button class="chpass-btn" onclick="openPassModal()">&#x1F512; Jelszocsere</button>
+    <button class="logout-btn" onclick="logout()">Kijelentkezes</button>
+  </div>
+</div>
+
+<!-- Jelszócsere modal -->
+<div class="modal-overlay" id="passModal">
+  <div class="modal-box">
+    <h3>&#x1F512; Jelszo megvaltoztatasa</h3>
+    <div class="modal-field">
+      <label>Jelenlegi jelszo</label>
+      <input type="password" id="passOld" placeholder="Jelenlegi jelszo">
+    </div>
+    <div class="modal-field">
+      <label>Uj jelszo</label>
+      <input type="password" id="passNew" placeholder="Legalabb 4 karakter">
+    </div>
+    <div class="modal-field">
+      <label>Uj jelszo megegyszer</label>
+      <input type="password" id="passNew2" placeholder="Uj jelszo megegyszer">
+    </div>
+    <div class="modal-actions">
+      <button class="modal-cancel" onclick="closePassModal()">Megse</button>
+      <button class="modal-save" onclick="changePassword()">Mentés</button>
+    </div>
+    <div class="modal-msg" id="passMsg"></div>
+  </div>
 </div>
 
 <!-- Idő / WiFi / Memória sáv -->
@@ -507,6 +560,83 @@ function updateMemory(free, total) {
   if (text) text.innerText = freeKB + ' / ' + totalKB + ' KB szabad (' + usedPct + '%)';
 }
 function logout() { fetch('/logout',{method:'POST'}).then(()=>location.reload()); }
+
+// ================================================================
+// Jelszócsere modal
+// ================================================================
+function openPassModal() {
+  document.getElementById('passOld').value  = '';
+  document.getElementById('passNew').value  = '';
+  document.getElementById('passNew2').value = '';
+  setPassMsg('', '');
+  document.getElementById('passModal').classList.add('open');
+  setTimeout(() => document.getElementById('passOld').focus(), 50);
+}
+
+function closePassModal() {
+  document.getElementById('passModal').classList.remove('open');
+}
+
+function setPassMsg(text, type) {
+  const el = document.getElementById('passMsg');
+  el.textContent = text;
+  el.className = 'modal-msg' + (type ? ' ' + type : '');
+}
+
+// Modal bezárása háttérre kattintáskor
+document.addEventListener('click', e => {
+  if (e.target === document.getElementById('passModal')) closePassModal();
+});
+
+// ESC billentyű bezárja
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closePassModal();
+});
+
+// Enter billentyű menti
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && document.getElementById('passModal').classList.contains('open'))
+    changePassword();
+});
+
+function changePassword() {
+  const oldP  = document.getElementById('passOld').value.trim();
+  const newP  = document.getElementById('passNew').value;
+  const newP2 = document.getElementById('passNew2').value;
+
+  // Kliens oldali validáció
+  if (!oldP || !newP || !newP2) {
+    setPassMsg('Minden mezo kitoltese kotelezo!', 'err'); return;
+  }
+  if (newP.length < 4) {
+    setPassMsg('Az uj jelszo legalabb 4 karakter legyen!', 'err'); return;
+  }
+  if (newP !== newP2) {
+    setPassMsg('A ket uj jelszo nem egyezik!', 'err'); return;
+  }
+
+  setPassMsg('Mentés...', '');
+
+  fetch('/change_password', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+    body: 'old=' + encodeURIComponent(oldP) + '&new=' + encodeURIComponent(newP)
+  })
+  .then(r => r.text())
+  .then(t => {
+    if (t === 'OK') {
+      setPassMsg('Jelszo sikeresen megvaltoztatva!', 'ok');
+      setTimeout(closePassModal, 1500);
+    } else if (t === 'WRONG') {
+      setPassMsg('A jelenlegi jelszo nem helyes!', 'err');
+      document.getElementById('passOld').focus();
+    } else {
+      setPassMsg('Hiba tortent, probald ujra!', 'err');
+    }
+  })
+  .catch(() => setPassMsg('Kapcsolati hiba!', 'err'));
+}
+
 window.onload = initWebSocket;
 </script>
 </body></html>
@@ -563,9 +693,7 @@ inline void WebManager::begin() {
     });
     server.on("/login", HTTP_POST, [this]() {
         String pass = server.arg("password");
-        String stored = eeprom ? eeprom->loadWebPassword() : "admin";
-        if (stored.isEmpty()) stored = "admin";
-        if (pass == stored) {
+        if (pass == getStoredPassword()) {
             sessionToken = generateToken();
             if (eeprom) eeprom->saveToken(sessionToken);
             server.sendHeader("Set-Cookie", "token=" + sessionToken + "; Max-Age=2592000; Path=/; HttpOnly");
@@ -582,6 +710,30 @@ inline void WebManager::begin() {
         server.sendHeader("Set-Cookie", "token=; Max-Age=0; Path=/");
         server.sendHeader("Connection", "close");
         server.send(200, "text/plain", "OK");
+    });
+    server.on("/change_password", HTTP_POST, [this]() {
+        server.sendHeader("Connection", "close");
+        // Hitelesítés ellenőrzése
+        if (!isAuthenticated()) {
+            server.send(403, "text/plain", "DENIED");
+            return;
+        }
+        String oldPass = server.arg("old");
+        String newPass = server.arg("new");
+        // Jelenlegi jelszó ellenőrzése
+        if (oldPass != getStoredPassword()) {
+            server.send(200, "text/plain", "WRONG");
+            Serial.println("[Auth] Sikertelen jelszovaltas – hibas regi jelszo.");
+            return;
+        }
+        // Minimális hossz ellenőrzése (kliens is ellenőrzi, de szerver oldal is kell)
+        if (newPass.length() < 4) {
+            server.send(200, "text/plain", "SHORT");
+            return;
+        }
+        if (eeprom) eeprom->saveWebPassword(newPass);
+        server.send(200, "text/plain", "OK");
+        Serial.println("[Auth] Jelszo sikeresen megvaltoztatva.");
     });
     server.onNotFound([this]() {
         server.sendHeader("Connection", "close");
