@@ -4,65 +4,103 @@
 #include <Arduino.h>
 #include <time.h>
 #include "DeviceTypes.h"
-#include "EepromManager.h" 
+#include "EepromManager.h"
 
-#define RELAY_COUNT 4
+// Maximum relé szám – fix tömb méret, de aktív relék száma
+// EEPROM-ból töltődik be, alapértelmezetten 0
+#define RELAY_COUNT MAX_RELAY_COUNT  // = 4, az EepromManager-ből
 
-static DeviceConfig DEVICE_CONFIG[RELAY_COUNT] = {
-    {1, "Rele 1", DeviceType::GENERIC, 16, true, ModuleType::NONE},
-    {2, "Rele 2", DeviceType::GENERIC, 17, true, ModuleType::NONE},
-    {3, "Rele 3", DeviceType::GENERIC, 18, true, ModuleType::NONE},
-    {4, "Rele 4", DeviceType::GENERIC, 19, true, ModuleType::NONE},
-};
-
-// Fix méretű karakterpufferek a relék neveinek
-static char relayNameBuffers[RELAY_COUNT][32] = {
-    "Rele 1", "Rele 2", "Rele 3", "Rele 4"
-};
+// ---------------------------------------------------------------
+// A két statikus tömb helyett most tagváltozók – EEPROM-ból töltve
+// Alapesetben egy relé sincs definiálva (activeRelayCount = 0)
+// ---------------------------------------------------------------
 
 class DeviceManager {
 private:
-    bool     relayStates[RELAY_COUNT]     = {false};
-    uint32_t relayStartTimes[RELAY_COUNT] = {0};
-    EepromManager* eeprom = nullptr;
+    DeviceConfig   configs[RELAY_COUNT];
+    char           nameBuffers[RELAY_COUNT][32];
+    bool           relayStates[RELAY_COUNT]     = {false};
+    uint32_t       relayStartTimes[RELAY_COUNT] = {0};
+    uint8_t        activeRelayCount             = 0;
+    EepromManager* eeprom                       = nullptr;
 
-    int findIndex(uint8_t id) {
-        for (int i = 0; i < RELAY_COUNT; i++) {
-            if (DEVICE_CONFIG[i].id == id) return i;
+    // Index keresés ID alapján – csak aktív reléknél
+    int findIndex(uint8_t id) const {
+        for (int i = 0; i < activeRelayCount; i++) {
+            if (configs[i].id == id) return i;
         }
         return -1;
     }
 
 public:
-    DeviceManager() = default;
-
-    void setEeprom(EepromManager& em) { 
-        eeprom = &em; 
+    DeviceManager() {
+        // Tömbök nullázása
+        memset(configs,     0, sizeof(configs));
+        memset(nameBuffers, 0, sizeof(nameBuffers));
     }
 
+    void setEeprom(EepromManager& em) { eeprom = &em; }
+
+    // Aktív relék száma (0 ha még nincs konfigurálva)
+    uint8_t getRelayCount() const { return activeRelayCount; }
+
     void begin() {
-        for (int i = 0; i < RELAY_COUNT; i++) {
-            pinMode(DEVICE_CONFIG[i].relayPin, OUTPUT);
-            
-            if (eeprom != nullptr && eeprom->isValid()) {
-                // Relé nevének betöltése EEPROM-ból
-                String savedName = eeprom->loadRelayName(DEVICE_CONFIG[i].id);
-                if (savedName.length() > 0) {
-                    strncpy(relayNameBuffers[i], savedName.c_str(), 31);
-                    relayNameBuffers[i][31] = '\0';
-                    DEVICE_CONFIG[i].name = relayNameBuffers[i];
-                }
-                
-                // Relé utolsó állapotának visszaállítása
-                bool savedState = eeprom->loadRelayState(DEVICE_CONFIG[i].id);
-                setRelay(DEVICE_CONFIG[i].id, savedState);
-                
-                // Futási idő bázisának betöltése
-                relayStartTimes[i] = eeprom->loadRelayStartTime(DEVICE_CONFIG[i].id);
-            } else {
-                setRelay(DEVICE_CONFIG[i].id, false);
-            }
+        if (eeprom == nullptr) {
+            Serial.println("[Device] Nincs EEPROM – nulla rele aktiv.");
+            return;
         }
+
+        activeRelayCount = 0;
+
+        for (uint8_t i = 0; i < RELAY_COUNT; i++) {
+            bool    active;
+            uint8_t pin, devType, modType;
+            bool    activeLow;
+
+            eeprom->loadRelayConfig(i, active, pin, activeLow, devType, modType);
+
+            if (!active || pin == 0) {
+                // Ez a slot üres – nem töltjük be
+                continue;
+            }
+
+            // Config feltöltése
+            uint8_t id = i + 1;
+            configs[activeRelayCount].id           = id;
+            configs[activeRelayCount].relayPin      = pin;
+            configs[activeRelayCount].relayActiveLOW = activeLow;
+            configs[activeRelayCount].type          = (DeviceType)devType;
+            configs[activeRelayCount].module        = (ModuleType)modType;
+
+            // Név betöltése EEPROM-ból
+            String savedName = eeprom->loadRelayName(id);
+            if (savedName.length() > 0) {
+                strncpy(nameBuffers[activeRelayCount], savedName.c_str(), 31);
+            } else {
+                // Fallback: "Rele N"
+                snprintf(nameBuffers[activeRelayCount], 32, "Rele %d", id);
+            }
+            nameBuffers[activeRelayCount][31] = '\0';
+            configs[activeRelayCount].name = nameBuffers[activeRelayCount];
+
+            // GPIO inicializálás
+            pinMode(pin, OUTPUT);
+
+            // Állapot visszaállítása
+            bool savedState = eeprom->loadRelayState(id);
+            relayStates[activeRelayCount] = savedState;
+            bool pinLevel = activeLow ? savedState : !savedState;
+            digitalWrite(pin, pinLevel);
+
+            // Futási idő visszaállítása
+            relayStartTimes[activeRelayCount] = eeprom->loadRelayStartTime(id);
+
+            Serial.printf("[Device] Rele %d betoltve: pin=%d, nev=%s\n",
+                          id, pin, nameBuffers[activeRelayCount]);
+            activeRelayCount++;
+        }
+
+        Serial.printf("[Device] %d aktiv rele inicializalva.\n", activeRelayCount);
     }
 
     bool setRelay(uint8_t id, bool state) {
@@ -70,12 +108,10 @@ public:
         if (idx < 0) return false;
 
         relayStates[idx] = state;
-        bool pinLevel = DEVICE_CONFIG[idx].relayActiveLOW ? state : !state;
-        digitalWrite(DEVICE_CONFIG[idx].relayPin, pinLevel);
+        bool pinLevel = configs[idx].relayActiveLOW ? state : !state;
+        digitalWrite(configs[idx].relayPin, pinLevel);
 
-        if (eeprom != nullptr) {
-            eeprom->saveRelayState(id, state);
-        }
+        if (eeprom != nullptr) eeprom->saveRelayState(id, state);
 
         if (state) {
             if (relayStartTimes[idx] == 0) {
@@ -98,36 +134,31 @@ public:
     bool renameRelay(uint8_t id, const String& name) {
         int idx = findIndex(id);
         if (idx < 0) return false;
-        
-        strncpy(relayNameBuffers[idx], name.c_str(), 31);
-        relayNameBuffers[idx][31] = '\0';
-        DEVICE_CONFIG[idx].name = relayNameBuffers[idx];
-        
-        if (eeprom != nullptr) {
-            eeprom->saveRelayName(id, name);
-        }
+        strncpy(nameBuffers[idx], name.c_str(), 31);
+        nameBuffers[idx][31] = '\0';
+        configs[idx].name = nameBuffers[idx];
+        if (eeprom != nullptr) eeprom->saveRelayName(id, name);
         return true;
     }
 
-    bool getState(uint8_t id) {
+    bool getState(uint8_t id) const {
         int idx = findIndex(id);
         if (idx < 0) return false;
         return relayStates[idx];
     }
 
-    const char* getName(uint8_t id) {
+    const char* getName(uint8_t id) const {
         int idx = findIndex(id);
         if (idx < 0) return "Ismeretlen";
-        return relayNameBuffers[idx];
+        return nameBuffers[idx];
     }
 
-    uint32_t getRelayStartTime(uint8_t id) {
-        int idx = findIndex(id);
-        if (idx < 0) return 0;
-        return relayStartTimes[idx];
+    uint8_t getIdByIndex(uint8_t idx) const {
+        if (idx >= activeRelayCount) return 0;
+        return configs[idx].id;
     }
 
-    uint32_t getUptime(uint8_t id, uint32_t currentEpoch) {
+    uint32_t getUptime(uint8_t id, uint32_t currentEpoch) const {
         int idx = findIndex(id);
         if (idx < 0 || !relayStates[idx] || relayStartTimes[idx] == 0) return 0;
         if (currentEpoch < relayStartTimes[idx]) return 0;

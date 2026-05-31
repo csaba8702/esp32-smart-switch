@@ -60,6 +60,37 @@ void setup() {
     // ---- Auth: alapértelmezett jelszó beállítása első indításkor ----
     authManager.begin();
 
+    // ---- Relay konfiguráció: alapértelmezett 4 relé első indításkor ----
+    // Ha az első slot inaktív, feltételezzük hogy még nincs konfigurálva.
+    // Ilyenkor beírjuk a 4 alapértelmezett relét (GPIO 16-19, activeLOW).
+    // Később a webes felületen lehet majd módosítani.
+    {
+        bool    active; uint8_t pin, devType, modType; bool activeLow;
+        eepromManager.loadRelayConfig(0, active, pin, activeLow, devType, modType);
+        if (!active || pin == 0) {
+            Serial.println("[Main] Relay config ures – alapertelmezett 4 rele betoltese...");
+            const uint8_t defaultPins[4] = {16, 17, 18, 19};
+            for (uint8_t i = 0; i < 4; i++) {
+                eepromManager.saveRelayConfig(
+                    i,
+                    true,                          // active
+                    defaultPins[i],                // pin
+                    true,                          // activeLOW
+                    (uint8_t)DeviceType::GENERIC,  // devType
+                    (uint8_t)ModuleType::NONE      // modType
+                );
+                // Alapértelmezett név mentése ha még nincs
+                String existingName = eepromManager.loadRelayName(i + 1);
+                if (existingName.isEmpty()) {
+                    char buf[32];
+                    snprintf(buf, 32, "Rele %d", i + 1);
+                    eepromManager.saveRelayName(i + 1, String(buf));
+                }
+            }
+            Serial.println("[Main] 4 alapertelmezett rele elmentve EEPROM-ba.");
+        }
+    }
+
     // ---- Eszközök ----
     deviceManager.setEeprom(eepromManager);
     deviceManager.begin();

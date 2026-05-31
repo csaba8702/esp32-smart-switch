@@ -115,6 +115,19 @@ body{font-family:'Segoe UI',sans-serif;background:#eef2f7;margin:0;padding:16px;
 .badge-on{color:#10b981;font-weight:700}.badge-off{color:#ef4444;font-weight:700}
 .badge-week{display:inline-flex;gap:3px;flex-wrap:wrap}
 .day-tag{background:#dbeafe;color:#1d4ed8;border-radius:3px;padding:1px 5px;font-size:12px;font-weight:600}
+
+@media(max-width:480px){
+body{padding:10px}
+.grid{grid-template-columns:repeat(2,1fr);gap:10px}
+.card{padding:12px 10px}
+.relay-name{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;display:block}
+.rename-btn{font-size:10px}
+.relay-status{font-size:11px;min-height:28px;margin-bottom:8px}
+.switch-btn{padding:8px;font-size:13px}
+.header{flex-wrap:wrap;gap:8px;padding:12px 14px}
+.header h1{font-size:18px}
+.info-bar{font-size:12px;padding:8px 12px}
+}
 </style></head><body>
 <div class="container">
 

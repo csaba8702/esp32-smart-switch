@@ -65,17 +65,19 @@ private:
         doc["psram_free"]   = (uint32_t)ESP.getFreePsram();   // 0 ha nincs PSRAM
 
         JsonArray relays = doc.createNestedArray("relays");
-        for (uint8_t i = 1; i <= RELAY_COUNT; i++) {
+        uint8_t relayCount = deviceManager.getRelayCount();
+        for (uint8_t i = 0; i < relayCount; i++) {
+            uint8_t id = deviceManager.getIdByIndex(i);
             JsonObject ro = relays.createNestedObject();
-            ro["id"]     = i;
-            ro["name"]   = deviceManager.getName(i);
-            ro["state"]  = deviceManager.getState(i);
-            ro["uptime"] = deviceManager.getUptime(i, ntpManager ? (uint32_t)time(nullptr) : 0);
+            ro["id"]     = id;
+            ro["name"]   = deviceManager.getName(id);
+            ro["state"]  = deviceManager.getState(id);
+            ro["uptime"] = deviceManager.getUptime(id, ntpManager ? (uint32_t)time(nullptr) : 0);
         }
 
         if (scheduleManager != nullptr) {
             JsonArray rules = doc.createNestedArray("schedules");
-            for (uint8_t r = 1; r <= RELAY_COUNT; r++) {
+            for (uint8_t r = 1; r <= relayCount; r++) {
                 for (uint8_t s = 0; s < scheduleManager->getCount(r); s++) {
                     const ScheduleRule& rule = scheduleManager->getRule(r, s);
                     JsonObject ro = rules.createNestedObject();

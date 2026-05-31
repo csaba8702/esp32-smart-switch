@@ -7,7 +7,7 @@
 #define EEPROM_SIZE              1024
 #define EEPROM_RELAY_COUNT       4
 #define EEPROM_MAGIC_ADDR        0
-#define EEPROM_MAGIC_VAL         0xAE   // 0xAD -> 0xAE: startSec/endSec uint32, layout változott
+#define EEPROM_MAGIC_VAL         0xAF   // 0xAF: relay config terület hozzáadva
 #define EEPROM_SSID_ADDR         1
 #define EEPROM_SSID_LEN          33
 #define EEPROM_PASS_ADDR         34
@@ -21,6 +21,24 @@
 
 #define EEPROM_SCHEDULES_START   350
 #define MAX_RULES_PER_RELAY      4
+
+// ---------------------------------------------------------------
+// Relay config layout – 8 byte / relé
+// EEPROM_RELAY_CONFIG_START = 686 (schedules vége után)
+//
+//  [0]  active    uint8  0=inaktív, 1=aktív
+//  [1]  pin       uint8  GPIO pin száma
+//  [2]  activeLow uint8  0=activeHIGH, 1=activeLOW
+//  [3]  devType   uint8  DeviceType enum értéke
+//  [4]  modType   uint8  ModuleType enum értéke
+//  [5..7] padding
+//
+// 4 × 8 byte = 32 byte → 686+32 = 718 < 1024 ✓
+// Relé neve: EEPROM_RELAY_NAME (102) – már megvan, változatlan
+// ---------------------------------------------------------------
+#define EEPROM_RELAY_CONFIG_START  686
+#define EEPROM_RELAY_CONFIG_SIZE   8
+#define MAX_RELAY_COUNT            4
 
 // ---------------------------------------------------------------
 // Rule bináris layout – 21 byte / rule
@@ -212,6 +230,52 @@ public:
     }
 
     void dump() {}
+
+    // ---- Relay konfiguráció mentés ----
+    void saveRelayConfig(uint8_t idx,
+                         bool    active,
+                         uint8_t pin,
+                         bool    activeLow,
+                         uint8_t devType,
+                         uint8_t modType)
+    {
+        if (idx >= MAX_RELAY_COUNT) return;
+        int b = EEPROM_RELAY_CONFIG_START + idx * EEPROM_RELAY_CONFIG_SIZE;
+        EEPROM.write(b,     active    ? 1 : 0);
+        EEPROM.write(b + 1, pin);
+        EEPROM.write(b + 2, activeLow ? 1 : 0);
+        EEPROM.write(b + 3, devType);
+        EEPROM.write(b + 4, modType);
+        EEPROM.write(b + 5, 0);
+        EEPROM.write(b + 6, 0);
+        EEPROM.write(b + 7, 0);
+        EEPROM.commit();
+    }
+
+    // ---- Relay konfiguráció betöltés ----
+    void loadRelayConfig(uint8_t  idx,
+                         bool&    active,
+                         uint8_t& pin,
+                         bool&    activeLow,
+                         uint8_t& devType,
+                         uint8_t& modType)
+    {
+        if (idx >= MAX_RELAY_COUNT) return;
+        int b = EEPROM_RELAY_CONFIG_START + idx * EEPROM_RELAY_CONFIG_SIZE;
+        active    = (EEPROM.read(b)     == 1);
+        pin       =  EEPROM.read(b + 1);
+        activeLow = (EEPROM.read(b + 2) == 1);
+        devType   =  EEPROM.read(b + 3);
+        modType   =  EEPROM.read(b + 4);
+    }
+
+    // ---- Relay config törlése (inaktív) ----
+    void clearRelayConfig(uint8_t idx) {
+        if (idx >= MAX_RELAY_COUNT) return;
+        int b = EEPROM_RELAY_CONFIG_START + idx * EEPROM_RELAY_CONFIG_SIZE;
+        for (int i = 0; i < EEPROM_RELAY_CONFIG_SIZE; i++) EEPROM.write(b + i, 0);
+        EEPROM.commit();
+    }
 };
 
 #endif // EEPROM_MANAGER_H
