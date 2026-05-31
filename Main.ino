@@ -6,35 +6,32 @@
 #include "WifiManager.h"
 #include "NTPManager.h"
 
-// 3. HARDVER MENEDZSEREK (amik már függenek az EEPROM-tól)
+// 3. HARDVER MENEDZSEREK
 #include "DeviceManager.h"
 #include "ScheduleManager.h"
 
-// 4. KAPCSOLATI RÉTEG ÉS WEBFELÜLET
+// 4. AUTENTIKÁCIÓ
+#include "AuthManager.h"
+
+// 5. KAPCSOLATI RÉTEG ÉS WEBFELÜLET
 #include "WebManager.h"
 #include "WebSocketManager.h"
 #include "SensorManager.h"
 
-// 5. WATCHDOG
+// 6. WATCHDOG
 #include <esp_task_wdt.h>
 
 // ----------------------------------------------------------------
-// Watchdog timeout értékek
-//   LOOP_WDT_TIMEOUT_S  – ha a loop() ennyi másodpercig nem feedeli
-//                         a WDT-t, az ESP32 újraindul.
-//                         A loop() handlerei (WebServer, WebSocket)
-//                         normál esetben jóval 1 sec alatt lefutnak.
-//
-//   A WifiReconnect task saját timeoutját a WifiManager kezeli
-//   (ld. WifiManager.h), itt csak a loop task-ot regisztráljuk.
+// Watchdog timeout
 // ----------------------------------------------------------------
 static const uint32_t LOOP_WDT_TIMEOUT_S = 10;
 
 // --- WiFi beállítások ---
 static WifiConfig wifiConfig("ARRIS-6D0C", "mQ7kNcL3hQcf");
 
-// --- Globális Modul példányosítások ---
+// --- Globális modul példányok ---
 static EepromManager    eepromManager;
+static AuthManager      authManager(eepromManager);
 static WifiManager      wifiManager(wifiConfig);
 static DeviceManager    deviceManager;
 static NTPManager       ntpManager(wifiManager);
@@ -47,49 +44,37 @@ void setup() {
     Serial.begin(115200);
 
     // ---- Watchdog inicializálása ----
-    // Az esp_task_wdt_init az összes regisztrált taskot figyeli.
-    // panic=true: timeout esetén crash dump + újraindulás (nem silent reset).
     esp_task_wdt_config_t wdtCfg = {
         .timeout_ms     = LOOP_WDT_TIMEOUT_S * 1000,
-        .idle_core_mask = 0,    // idle taskokat ne figyelje
-        .trigger_panic  = true  // timeout -> panic -> reboot
+        .idle_core_mask = 0,
+        .trigger_panic  = true
     };
     esp_task_wdt_reconfigure(&wdtCfg);
+    esp_task_wdt_add(NULL);
+    Serial.printf("[WDT] Loop task watchdog beallitva (%d mp)\n", LOOP_WDT_TIMEOUT_S);
 
-    // Loop task (az Arduino main task) regisztrálása a WDT-hez.
-    // A WifiReconnect task saját magát regisztrálja induláskor (WifiManager).
-    esp_task_wdt_add(NULL); // NULL = aktuális task (loop task)
-    Serial.println("[WDT] Loop task watchdog beallitva (" 
-                   + String(LOOP_WDT_TIMEOUT_S) + " mp)");
-
-    // Először elindítjuk az EEPROM-ot
+    // ---- EEPROM ----
     eepromManager.begin();
+    // eepromManager.clear(); // jelszó reset szükség esetén
 
-    // Szükség esetén törölhető (egyszeri futtatás jelszó resetre):
-    // eepromManager.clear();
+    // ---- Auth: alapértelmezett jelszó beállítása első indításkor ----
+    authManager.begin();
 
-    // Összekötjük a függőségeket
+    // ---- Eszközök ----
     deviceManager.setEeprom(eepromManager);
-    // Jelszó csak akkor kerül alapértelmezettre ha az EEPROM még üres/friss.
-    // Ha itt mindig felülírnánk, jelszócsere után reboot = visszaáll admin-ra!
-    {
-        String savedPass = eepromManager.loadWebPassword();
-        if (savedPass.isEmpty()) {
-            eepromManager.saveWebPassword("admin");
-            Serial.println("[Auth] Alapertelmezett jelszo beallitva: admin");
-        }
-    }
     deviceManager.begin();
 
-    webManager.setEeprom(eepromManager);
+    // ---- Web és WebSocket ----
+    webManager.setAuth(authManager);
     webSocketManager.setEeprom(eepromManager);
     webSocketManager.setScheduleManager(scheduleManager);
 
-    // Hálózati szolgáltatások indítása
+    // ---- Hálózat ----
     wifiManager.begin();
     ntpManager.begin();
     webSocketManager.setNTP(ntpManager);
 
+    // ---- Szolgáltatások indítása ----
     webManager.begin();
     webSocketManager.begin();
     sensorManager.begin();

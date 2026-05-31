@@ -3,23 +3,15 @@
 
 #include <WebServer.h>
 #include "WifiManager.h"
-
-class EepromManager;
+#include "AuthManager.h"
 
 class WebManager {
 private:
-    WebServer  server{8080};
+    WebServer    server{8080};
     WifiManager& wifiManager;
-    EepromManager* eeprom = nullptr;
-    String sessionToken = "";
+    AuthManager* auth = nullptr;
 
-    String generateToken() {
-        String t = "";
-        const char chars[] = "0123456789abcdef";
-        for (int i = 0; i < 32; i++) t += chars[esp_random() % 16];
-        return t;
-    }
-
+    // Cookie értékének kinyerése a header stringből
     String getCookieValue(const String& header, const String& name) {
         String search = name + "=";
         int s = header.indexOf(search);
@@ -30,17 +22,11 @@ private:
         return header.substring(s, e);
     }
 
+    // HTTP kérés hitelesítése: cookie token -> AuthManager ellenőrzés
     bool isAuthenticated() {
-        if (sessionToken.isEmpty()) return false;
-        return getCookieValue(server.header("Cookie"), "token") == sessionToken;
-    }
-
-    // Jelszó lekérése EEPROM-ból.
-    // Ha nincs EEPROM, üres stringet ad vissza -> bejelentkezés nem lehetséges.
-    // Az "admin" alapértelmezett jelszót a Main.ino állítja be első indításkor.
-    String getStoredPassword() {
-        if (eeprom == nullptr) return "";
-        return eeprom->loadWebPassword();
+        if (auth == nullptr) return false;
+        String token = getCookieValue(server.header("Cookie"), "token");
+        return auth->isAuthenticated(token);
     }
 
     // ----------------------------------------------------------------
@@ -645,30 +631,16 @@ window.onload = initWebSocket;
 public:
     WebManager(WifiManager& wm) : wifiManager(wm) {}
 
-    void setEeprom(EepromManager& em);
+    void setAuth(AuthManager& am) { auth = &am; }
     void begin();
-    void handle() {
-        // Több handle() hívás egy loop()-on belül csökkenti a késést
-        // és gyorsabban üríti a bejövő kérés sort
-        server.handleClient();
-    }
+    void handle() { server.handleClient(); }
 };
-
-#include "EepromManager.h"
-
-inline void WebManager::setEeprom(EepromManager& em) {
-    eeprom = &em;
-    sessionToken = eeprom->loadToken();
-}
 
 inline void WebManager::begin() {
     const char* headers[] = {"Cookie"};
     server.collectHeaders(headers, 1);
-
-    // Kapcsolat azonnal lezárul válasz után – nem marad nyitva socket slot
-    // Ez megakadályozza a TCP socket kimerülést gyors újratöltéseknél
     server.enableCORS(false);
-    server.enableDelay(false); // ne várjon feleslegesen a könyvtár
+    server.enableDelay(false);
 
     server.on("/", HTTP_GET, [this]() {
         if (!isAuthenticated()) {
@@ -681,6 +653,7 @@ inline void WebManager::begin() {
         server.sendHeader("Cache-Control", "no-store");
         server.send(200, "text/html; charset=UTF-8", INDEX_HTML);
     });
+
     server.on("/login", HTTP_GET, [this]() {
         if (isAuthenticated()) {
             server.sendHeader("Location", "/");
@@ -691,54 +664,47 @@ inline void WebManager::begin() {
         server.sendHeader("Connection", "close");
         server.send(200, "text/html; charset=UTF-8", LOGIN_HTML);
     });
+
     server.on("/login", HTTP_POST, [this]() {
-        String pass = server.arg("password");
-        if (pass == getStoredPassword()) {
-            sessionToken = generateToken();
-            if (eeprom) eeprom->saveToken(sessionToken);
-            server.sendHeader("Set-Cookie", "token=" + sessionToken + "; Max-Age=2592000; Path=/; HttpOnly");
+        if (auth == nullptr) { server.send(500, "text/plain", "ERR"); return; }
+        if (auth->login(server.arg("password"))) {
+            server.sendHeader("Set-Cookie", "token=" + auth->getToken() + "; Max-Age=2592000; Path=/; HttpOnly");
             server.sendHeader("Location", "/");
             server.sendHeader("Connection", "close");
             server.send(302, "text/plain", "");
-            Serial.println("[Auth] Sikeres bejelentkezes.");
         } else {
             server.sendHeader("Connection", "close");
             server.send(401, "text/plain", "Hibas jelszo");
         }
     });
+
     server.on("/logout", HTTP_POST, [this]() {
+        if (auth) auth->logout();
         server.sendHeader("Set-Cookie", "token=; Max-Age=0; Path=/");
         server.sendHeader("Connection", "close");
         server.send(200, "text/plain", "OK");
     });
+
     server.on("/change_password", HTTP_POST, [this]() {
         server.sendHeader("Connection", "close");
-        // Hitelesítés ellenőrzése
         if (!isAuthenticated()) {
             server.send(403, "text/plain", "DENIED");
             return;
         }
-        String oldPass = server.arg("old");
-        String newPass = server.arg("new");
-        // Jelenlegi jelszó ellenőrzése
-        if (oldPass != getStoredPassword()) {
-            server.send(200, "text/plain", "WRONG");
-            Serial.println("[Auth] Sikertelen jelszovaltas – hibas regi jelszo.");
-            return;
+        if (auth == nullptr) { server.send(500, "text/plain", "ERR"); return; }
+        auto result = auth->changePassword(server.arg("old"), server.arg("new"));
+        switch (result) {
+            case AuthManager::ChangeResult::OK:        server.send(200, "text/plain", "OK");    break;
+            case AuthManager::ChangeResult::WRONG_OLD: server.send(200, "text/plain", "WRONG"); break;
+            case AuthManager::ChangeResult::TOO_SHORT: server.send(200, "text/plain", "SHORT"); break;
         }
-        // Minimális hossz ellenőrzése (kliens is ellenőrzi, de szerver oldal is kell)
-        if (newPass.length() < 4) {
-            server.send(200, "text/plain", "SHORT");
-            return;
-        }
-        if (eeprom) eeprom->saveWebPassword(newPass);
-        server.send(200, "text/plain", "OK");
-        Serial.println("[Auth] Jelszo sikeresen megvaltoztatva.");
     });
+
     server.onNotFound([this]() {
         server.sendHeader("Connection", "close");
         server.send(404, "text/plain", "404");
     });
+
     server.begin();
     Serial.println("[Web] HTTP szerver elindult (8080)");
 }
