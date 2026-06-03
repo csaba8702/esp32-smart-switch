@@ -33,6 +33,7 @@ private:
         doc["connected"] = wifiManager.isWifiConnected();
         doc["rssi"]      = wifiManager.getRSSI();
         doc["ip"]        = wifiManager.getLocalIP();
+        doc["mode"]      = wifiManager.getModeString(); // "AP" vagy "STA"
         String json; serializeJson(doc, json);
         webSocket.broadcastTXT(json);
     }

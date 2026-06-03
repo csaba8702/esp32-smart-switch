@@ -297,8 +297,13 @@ function initWebSocket() {
       // Memória frissítése a time üzenetből – másodpercenként automatikusan
       updateMemory(d.heap_free, d.heap_total);
     } else if (d.type === 'wifi') {
-      document.getElementById('wifi-display').innerText =
-        'WiFi: ' + (d.connected ? d.rssi + ' dBm | ' + d.ip : 'Nincs kapcsolat');
+      if (d.mode === 'AP') {
+        document.getElementById('wifi-display').innerText =
+          'WiFi: [Hotspot] ' + d.ip;
+      } else {
+        document.getElementById('wifi-display').innerText =
+          'WiFi: ' + (d.connected ? d.rssi + ' dBm | ' + d.ip : 'Nincs kapcsolat');
+      }
     }
   };
   ws.onclose = () => setTimeout(initWebSocket, 2000);
