@@ -19,7 +19,6 @@ class DeviceManager {
 private:
     DeviceConfig   configs[RELAY_COUNT];
     char           nameBuffers[RELAY_COUNT][32];
-    char           uuidBuffers[RELAY_COUNT][7];  // 6 hex karakter + null
     bool           relayStates[RELAY_COUNT]     = {false};
     uint32_t       relayStartTimes[RELAY_COUNT] = {0};
     uint8_t        activeRelayCount             = 0;
@@ -36,9 +35,8 @@ private:
 public:
     DeviceManager() {
         // Tömbök nullázása
-        memset(configs,      0, sizeof(configs));
-        memset(nameBuffers,  0, sizeof(nameBuffers));
-        memset(uuidBuffers,  0, sizeof(uuidBuffers));
+        memset(configs,     0, sizeof(configs));
+        memset(nameBuffers, 0, sizeof(nameBuffers));
     }
 
     void setEeprom(EepromManager& em) { eeprom = &em; }
@@ -59,10 +57,12 @@ public:
             uint8_t pin, devType, modType;
             bool    activeLow;
 
-            uint32_t uuid = 0;
-            eeprom->loadRelayConfig(i, active, pin, activeLow, devType, modType, uuid);
+            eeprom->loadRelayConfig(i, active, pin, activeLow, devType, modType);
 
-            if (!active || pin == 0) continue;
+            if (!active || pin == 0) {
+                // Ez a slot üres – nem töltjük be
+                continue;
+            }
 
             // Config feltöltése
             uint8_t id = i + 1;
@@ -82,9 +82,6 @@ public:
             }
             nameBuffers[activeRelayCount][31] = '\0';
             configs[activeRelayCount].name = nameBuffers[activeRelayCount];
-
-            // UUID buffer feltöltése (6 hex karakter)
-            snprintf(uuidBuffers[activeRelayCount], 7, "%06X", uuid & 0xFFFFFF);
 
             // GPIO inicializálás
             pinMode(pin, OUTPUT);
@@ -159,31 +156,6 @@ public:
     uint8_t getIdByIndex(uint8_t idx) const {
         if (idx >= activeRelayCount) return 0;
         return configs[idx].id;
-    }
-
-    const char* getUUID(uint8_t id) const {
-        int idx = findIndex(id);
-        if (idx < 0) return "000000";
-        return uuidBuffers[idx];
-    }
-
-    // UUID uint32_t formában – SensorManager használja
-    uint32_t getUUIDasUint(uint8_t id) const {
-        int idx = findIndex(id);
-        if (idx < 0) return 0;
-        return (uint32_t)strtoul(uuidBuffers[idx], nullptr, 16);
-    }
-
-    // Relé ID keresése UUID alapján – SensorManager és WebSocketManager használja
-    uint8_t getIdByUUID(uint32_t uuid) const {
-        if (uuid == 0) return 0;
-        char uuidStr[7];
-        snprintf(uuidStr, 7, "%06X", uuid & 0xFFFFFF);
-        for (uint8_t i = 0; i < activeRelayCount; i++) {
-            if (strcmp(uuidBuffers[i], uuidStr) == 0)
-                return configs[i].id;
-        }
-        return 0;  // 0 = nem található
     }
 
     uint8_t getPin(uint8_t id) const {

@@ -120,9 +120,9 @@ body{font-family:'Segoe UI',sans-serif;background:#eef2f7;margin:0;padding:16px;
 .relcfg-btn{background:#334155;color:#fff;border:none;padding:7px 14px;border-radius:4px;cursor:pointer;margin-right:6px}
 .modal-box-wide{background:#fff;border-radius:10px;padding:24px;width:100%;max-width:580px;box-shadow:0 8px 32px rgba(0,0,0,.2);max-height:90vh;overflow-y:auto}
 .modal-box-wide h3{margin:0 0 14px;color:#1e293b;font-size:18px}
-.rcfg-head{display:grid;grid-template-columns:60px 1fr 72px 110px 36px;gap:8px;padding:0 0 6px;border-bottom:2px solid #e2e8f0;margin-bottom:4px}
+.rcfg-head{display:grid;grid-template-columns:1fr 72px 110px 36px;gap:8px;padding:0 0 6px;border-bottom:2px solid #e2e8f0;margin-bottom:4px}
 .rcfg-head span{font-size:11px;font-weight:700;color:#475569}
-.rcfg-row{display:grid;grid-template-columns:60px 1fr 72px 110px 36px;gap:8px;align-items:center;padding:7px 0;border-bottom:1px solid #f1f5f9}
+.rcfg-row{display:grid;grid-template-columns:1fr 72px 110px 36px;gap:8px;align-items:center;padding:7px 0;border-bottom:1px solid #f1f5f9}
 .rcfg-row:last-child{border-bottom:none}
 .rcfg-row input[type=text]{padding:6px 8px;border:1px solid #cbd5e1;border-radius:4px;font-size:13px;width:100%}
 .rcfg-row input[type=number]{padding:6px 8px;border:1px solid #cbd5e1;border-radius:4px;font-size:13px;width:100%;text-align:center}
@@ -143,35 +143,6 @@ body{padding:10px}
 .header h1{font-size:18px}
 .info-bar{font-size:12px;padding:8px 12px}
 }
-
-/* Szenzor jelvények a relé kártyán */
-.sensor-badge {
-    display: inline-block;
-    background: #e2e8f0;
-    padding: 2px 8px;
-    border-radius: 12px;
-    font-size: 12px;
-    margin: 2px;
-    color: #475569;
-    font-weight: bold;
-}
-
-/* Szenzor gomb a kártyán */
-.sensor-btn {
-    background: #f1f5f9;
-    border: 1px solid #cbd5e1;
-    cursor: pointer;
-    padding: 5px;
-    border-radius: 4px;
-    margin-top: 5px;
-    font-size: 11px;
-}
-.sensor-btn:hover { background: #e2e8f0; }
-
-/* Modal stílus (ha még nincs) */
-.modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); }
-.modal.open { display: flex; justify-content: center; align-items: center; }
-.modal-content { background: white; padding: 20px; border-radius: 8px; width: 300px; }
 </style></head><body>
 <div class="container">
 
@@ -214,7 +185,7 @@ body{padding:10px}
   <div class="modal-box-wide">
     <h3>&#x2699; Relek konfigurálása</h3>
     <div class="rcfg-head">
-      <span>UUID</span><span>Nev</span><span>GPIO pin</span><span>Logika</span><span></span>
+      <span>Nev</span><span>GPIO pin</span><span>Logika</span><span></span>
     </div>
     <div id="rcfgList"></div>
     <button class="rcfg-add" onclick="addRcfgRow()">+ Rele hozzaadasa</button>
@@ -226,25 +197,10 @@ body{padding:10px}
   </div>
 </div>
 
-<!-- Sensor konfigurációs modal -->
-<div id="sensorModal" class="modal">
-  <div class="modal-content">
-    <h3>Szenzor hozzáadása</h3>
-    <input type="hidden" id="sensorUuid">
-    <select id="sensorType">
-      <option value="CURRENT">Árammérő (CURRENT)</option>
-    </select>
-    <input type="number" id="sensorPin" placeholder="GPIO Pin">
-    <button onclick="saveSensor()">Mentés</button>
-    <button onclick="closeSensorModal()">Mégse</button>
-  </div>
-</div>
-
 <!-- Idő / WiFi / Memória sáv -->
 <div class="info-bar">
   <span id="time-display">Ido: Szinkronizalas...</span>
   <span id="wifi-display">WiFi: --</span>
-  <span id="boot-display" style="font-weight:bold; color:#64748b;">Indulások: 0</span>
   <span id="mem-display" style="display:flex;align-items:center;gap:8px;font-size:13px">
     <span>RAM:</span>
     <span style="position:relative;display:inline-block;width:100px;height:12px;background:#e2e8f0;border-radius:6px;overflow:hidden">
@@ -354,8 +310,6 @@ let relayStates    = {};
 let relayUptimes   = {};
 let uptimeTimer    = null;
 let lastRelayState = [];
-let pendingReboot  = false;
-let reconnectDelay = 1000; // Alapértelmezett 1 másodperc
 
 const DAY_NAMES = ['H','K','Sze','Cs','P','Szo','V'];
 
@@ -373,10 +327,6 @@ function initWebSocket() {
       updateSelects(d.relays);
       startUptimeTimer();
       updateMemory(d.heap_free, d.heap_total);
-        const bootEl = document.getElementById('boot-display');
-        if (bootEl) {
-            bootEl.innerText = 'Indulások száma: ' + d.boot_count;
-        }
     } else if (d.type === 'time') {
       document.getElementById('time-display').innerText = 'Ido: ' + d.display;
       // Memória frissítése a time üzenetből – másodpercenként automatikusan
@@ -393,14 +343,9 @@ function initWebSocket() {
       pendingReboot = true;
     }
   };
-  ws.onclose = () => { 
-    // Exponenciális növelés: duplázza az időt, de max 30 másodperc
-    reconnectDelay = Math.min(reconnectDelay * 2, 30000); 
-    setTimeout(initWebSocket, reconnectDelay); 
-  };
-  ws.onopen = () => { 
-    reconnectDelay = 1000; // Sikeres csatlakozáskor reseteljük 1 másodpercre
-    if (pendingReboot) { pendingReboot=false; location.reload(); } 
+  ws.onclose = () => { setTimeout(initWebSocket, 2000); };
+  ws.onopen  = () => {
+    if (pendingReboot) { pendingReboot = false; location.reload(); }
   };
 }
 
@@ -427,15 +372,6 @@ function renderRelays(relays) {
     relayNamesMap[r.id] = r.name;
     relayStates[r.id]   = r.state;
     relayUptimes[r.id]  = r.uptime || 0;
-
-    // --- ÚJ: Szenzorok megjelenítése ---
-    let sensorsHtml = '';
-    if (r.sensors && r.sensors.length > 0) {
-      r.sensors.forEach(s => {
-        sensorsHtml += `<div class="sensor-badge">⚡ ${s.type}: ${s.value}A</div>`;
-      });
-    }
-
     const c = document.createElement('div');
     c.className = 'card';
     c.innerHTML =
@@ -445,8 +381,6 @@ function renderRelays(relays) {
         'Allapot: <b style="color:' + (r.state ? '#10b981' : '#ef4444') + '">' + (r.state ? 'BE' : 'KI') + '</b><br>' +
         'Futasi ido: ' + formatUptime(r.uptime) +
       '</div>' +
-      sensorsHtml + // Itt jelennek meg a szenzorok
-      '<button class="sensor-btn" onclick="openSensorModal(\'' + (r.uuid || '') + '\')">⚙️ Szenzor</button>' +
       '<button class="switch-btn ' + (r.state ? 'on' : 'off') + '" onclick="toggleRelay(' + r.id + ')">' +
         (r.state ? 'Kikapcsolas' : 'Bekapcsolas') +
       '</button>';
@@ -675,7 +609,7 @@ function logout() { fetch('/logout',{method:'POST'}).then(()=>location.reload())
 // Relay konfiguráció modal
 // ================================================================
 let rcfgData      = [];   // [{id, name, pin, activeLow}, ...]
-//let pendingReboot = false;
+let pendingReboot = false;
 
 function openRelayModal() {
   rcfgData = [];
@@ -688,7 +622,6 @@ function openRelayModal() {
     lastRelayState.forEach(r => {
       rcfgData.push({
         id:        r.id,
-        uuid:      r.uuid      || '',
         name:      r.name,
         pin:       r.pin       || 0,
         activeLow: r.activeLow !== false
@@ -708,15 +641,7 @@ function renderRcfgRow(i) {
   const row = document.createElement('div');
   row.className = 'rcfg-row';
   row.id = 'rcfgRow-' + i;
-  // UUID: meglévő reléknél megőrizzük, új reléknél "NEW" jelzés amíg ESP nem generál
-  const uuidDisplay = r.uuid && r.uuid !== '000000'
-    ? '<span style="font-family:monospace;font-size:11px;color:#475569;background:#f1f5f9;padding:2px 4px;border-radius:3px">' + r.uuid + '</span>'
-    : '<span style="font-size:10px;color:#94a3b8;font-style:italic">auto</span>';
-
   row.innerHTML =
-    // UUID mező – csak olvasható, rejtett input tárolja az értéket
-    '<div style="display:flex;align-items:center">' + uuidDisplay +
-      '<input type="hidden" id="rcUUID-' + i + '" value="' + (r.uuid || '') + '"></div>' +
     '<input type="text"   id="rcName-' + i + '" value="' + r.name + '" placeholder="Nev" maxlength="31">' +
     '<input type="number" id="rcPin-'  + i + '" value="' + r.pin  + '" min="0" max="39" placeholder="GPIO">' +
     '<select id="rcLow-' + i + '">' +
@@ -729,7 +654,7 @@ function renderRcfgRow(i) {
 
 function addRcfgRow() {
   const newId = rcfgData.length + 1;
-  rcfgData.push({ id: newId, uuid: '', name: 'Rele ' + newId, pin: 0, activeLow: true });
+  rcfgData.push({ id: newId, name: 'Rele ' + newId, pin: 0, activeLow: true });
   renderRcfgRow(rcfgData.length - 1);
 }
 
@@ -747,8 +672,7 @@ function saveRelayCfg() {
     const activeLow = document.getElementById('rcLow-'  + i).value === '1';
     if (!name)                        { alert('A nev nem lehet ures!');            return; }
     if (isNaN(pin) || pin < 0 || pin > 39) { alert('Ervenytelen GPIO: ' + pin);   return; }
-    const uuid = document.getElementById('rcUUID-' + i).value;
-    relays.push({ id: i + 1, uuid, name, pin, activeLow });
+    relays.push({ id: i + 1, name, pin, activeLow });
   }
   ws.send(JSON.stringify({ type: 'save_relay_config', relays }));
   const msg = document.getElementById('relayMsg');
@@ -840,33 +764,6 @@ function changePassword() {
     }
   })
   .catch(() => setPassMsg('Kapcsolati hiba!', 'err'));
-}
-
-function openSensorModal(uuid) {
-  document.getElementById('sensorUuid').value = uuid;
-  document.getElementById('sensorModal').classList.add('open');
-}
-
-function closeSensorModal() {
-  document.getElementById('sensorModal').classList.remove('open');
-}
-
-function saveSensor() {
-  const uuid = document.getElementById('sensorUuid').value;
-  const type = document.getElementById('sensorType').value;
-  const pin  = parseInt(document.getElementById('sensorPin').value);
-
-  if (isNaN(pin)) { alert('Érvénytelen Pin!'); return; }
-
-  // Küldés az ESP32 felé a már megírt WebSocket handlernek
-  ws.send(JSON.stringify({
-    type: 'add_sensor',
-    uuid: uuid,
-    sensorType: type,
-    pin: pin
-  }));
-  
-  closeSensorModal();
 }
 
 window.onload = initWebSocket;
