@@ -10,32 +10,30 @@
 #define NTP_SERVER_2        "pool.ntp.org"       
 #define NTP_SERVER_3        "time.google.com"    
 #define NTP_TIMEZONE        "CET-1CEST,M3.5.0,M10.5.0/3"
-#define NTP_RESYNC_INTERVAL 86400000UL  
 #define NTP_RETRY_INTERVAL  15000UL     
 
 class NTPManager {
 private:
     WifiManager& wifiManager;
-    static bool synced; 
+    bool _synced = false; // Statikus helyett példány szintű változó
     unsigned long lastRetryTime = 0;
-
-    static void timeSyncCallback(struct timeval* tv) {
-        Serial.println("[NTP] Sikeres időszinkronizálás történt a háttérben!");
-        synced = true;
-    }
 
 public:
     NTPManager(WifiManager& wm) : wifiManager(wm) {}
 
     void begin() {
         Serial.println("[NTP] Inicializálás...");
-        synced = false;
-        sntp_set_time_sync_notification_cb(timeSyncCallback);
+        _synced = false;
+        // Az SNTP konfigurálása
         configTzTime(NTP_TIMEZONE, NTP_SERVER_1, NTP_SERVER_2, NTP_SERVER_3);
     }
 
     void handle() {
-        if (synced) return;
+        // Ha már szinkronban vagyunk, nem kell semmit tenni
+        if (_synced) return;
+
+        // AP módban nincs internet
+        if (wifiManager.getMode() == WifiMode::AP) return;
 
         unsigned long now = millis();
         if (now - lastRetryTime >= NTP_RETRY_INTERVAL) {
@@ -43,21 +41,21 @@ public:
 
             if (!wifiManager.isWifiConnected()) return;
 
+            // Az idő lekérése. Ha > 2026-os év (1.7e9 epoch), akkor a rendszer már szinkronizált
             time_t current = time(nullptr);
-            if (current > 1000000000UL) {
-                synced = true;
+            if (current > 1767225600UL) {
+                _synced = true;
                 Serial.println("[NTP] Idő validálva. Szinkron kész.");
-                return;
+            } else {
+                Serial.println("[NTP] Szinkronizálás folyamatban...");
             }
-            Serial.println("[NTP] Idő kérése folyamatban...");
         }
     }
 
-    bool isSynced() const { return synced; }
+    bool isSynced() const { return _synced; }
 
     time_t getEpoch() const {
-        if (!synced) return 0;
-        return time(nullptr);
+        return _synced ? time(nullptr) : 0;
     }
 
     struct tm getTime() const {
@@ -67,9 +65,8 @@ public:
         return ti;
     }
 
-    // Ezt keresi a WebSocketManager módosított sora!
     String getISOString() {
-        if (!synced) return "Nincs szinkron";
+        if (!_synced) return "Nincs szinkron";
         struct tm ti = getTime();
         char buf[25];
         snprintf(buf, sizeof(buf), "%04d-%02d-%02dT%02d:%02d:%02d",
@@ -79,7 +76,7 @@ public:
     }
 
     String getDisplayString() {
-        if (!synced) return "Szinkronizálás...";
+        if (!_synced) return "Szinkronizálás...";
         struct tm ti = getTime();
         char buf[25];
         snprintf(buf, sizeof(buf), "%04d.%02d.%02d. %02d:%02d:%02d",
@@ -89,13 +86,11 @@ public:
     }
 
     String getDayOfWeek() {
-        if (!synced) return "";
+        if (!_synced) return "";
         struct tm ti = getTime();
         const char* days[] = {"Vasárnap","Hétfő","Kedd","Szerda","Csütörtök","Péntek","Szombat"};
         return String(days[ti.tm_wday]);
     }
 };
-
-bool NTPManager::synced = false;
 
 #endif // NTP_MANAGER_H

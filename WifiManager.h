@@ -70,24 +70,26 @@ private:
     }
 
     // ---- STA mód csatlakozás ----
+    // Nem blokkoló: 1 mp-es lépésekben ellenőriz, közben WDT reset
     bool connectSTA() {
-        uint8_t attempts = 0;
         Serial.printf("[WiFi] Csatlakozas: %s\n", config.getSSID());
+        // Előző kapcsolat tisztítása – memória szivárgás elkerülése
+        WiFi.disconnect(false);
+        vTaskDelay(pdMS_TO_TICKS(100));
         WiFi.mode(WIFI_STA);
         WiFi.begin(config.getSSID(), config.getPassword());
 
-        while (WiFi.status() != WL_CONNECTED && attempts < MAX_RETRIES) {
-            vTaskDelay(pdMS_TO_TICKS(1000));
+        for (uint8_t attempts = 0; attempts < MAX_RETRIES; attempts++) {
             esp_task_wdt_reset();
-            Serial.printf("[WiFi] Proba %d/%d\n", attempts + 1, MAX_RETRIES);
-            attempts++;
-        }
+            vTaskDelay(pdMS_TO_TICKS(1000));
 
-        if (WiFi.status() == WL_CONNECTED) {
-            isConnected = true;
-            WiFi.localIP().toString().toCharArray(localIPBuf, sizeof(localIPBuf));
-            Serial.printf("[WiFi] Csatlakozva! IP: %s\n", localIPBuf);
-            return true;
+            if (WiFi.status() == WL_CONNECTED) {
+                isConnected = true;
+                WiFi.localIP().toString().toCharArray(localIPBuf, sizeof(localIPBuf));
+                Serial.printf("[WiFi] Csatlakozva! IP: %s\n", localIPBuf);
+                return true;
+            }
+            Serial.printf("[WiFi] Proba %d/%d\n", attempts + 1, MAX_RETRIES);
         }
 
         isConnected = false;
@@ -99,6 +101,10 @@ private:
         WifiManager* wm = static_cast<WifiManager*>(parameter);
         esp_task_wdt_add(NULL);
 
+        uint8_t  failCount    = 0;               // egymás utáni sikertelen próbák
+        uint32_t retryDelayMs = wm->RECONNECT_INTERVAL; // 5000ms alap
+        static const uint32_t MAX_RETRY_DELAY_MS = 300000; // max 5 perc
+
         while (wm->shouldRun) {
             esp_task_wdt_reset();
 
@@ -108,11 +114,41 @@ private:
                 continue;
             }
 
-            if (!wm->isConnected && WiFi.status() != WL_CONNECTED) {
-                wm->debugPrint("Kapcsolat elveszett. Ujracsatlakozas...");
-                wm->connectSTA();
+            // STA módban: kapcsolat ellenőrzés
+            if (WiFi.status() == WL_CONNECTED) {
+                // Kapcsolat helyreállt
+                if (!wm->isConnected) {
+                    wm->isConnected = true;
+                    failCount       = 0;
+                    retryDelayMs    = wm->RECONNECT_INTERVAL;
+                    Serial.println("[WiFi] Kapcsolat helyreallva.");
+                }
+                vTaskDelay(pdMS_TO_TICKS(wm->RECONNECT_INTERVAL));
+                continue;
             }
-            vTaskDelay(pdMS_TO_TICKS(wm->RECONNECT_INTERVAL));
+
+            // Nincs kapcsolat – próbálkozás
+            wm->isConnected = false;
+            failCount++;
+            Serial.printf("[WiFi] Kapcsolat hianya (proba #%d), ujracsatlakozas %d mp mulva...\n",
+                          failCount, retryDelayMs / 1000);
+
+            bool ok = wm->connectSTA();
+            if (!ok) {
+                // Exponenciális backoff: 5s -> 10s -> 20s -> ... -> max 5 perc
+                retryDelayMs = min((uint32_t)(retryDelayMs * 2), MAX_RETRY_DELAY_MS);
+            } else {
+                failCount    = 0;
+                retryDelayMs = wm->RECONNECT_INTERVAL;
+            }
+
+            // Várakozás – darabokban hogy a WDT ne timeout-oljon
+            uint32_t waited = 0;
+            while (waited < retryDelayMs && wm->shouldRun) {
+                esp_task_wdt_reset();
+                vTaskDelay(pdMS_TO_TICKS(1000));
+                waited += 1000;
+            }
         }
 
         esp_task_wdt_delete(NULL);
@@ -165,9 +201,15 @@ public:
         isConnected = false;
     }
 
-    bool        isWifiConnected() const {
+    bool isWifiConnected() const {
         if (currentMode == WifiMode::AP) return isConnected;
-        return isConnected && (WiFi.status() == WL_CONNECTED);
+        // Dupla ellenőrzés: flag ÉS valódi WiFi státusz
+        bool realStatus = (WiFi.status() == WL_CONNECTED);
+        if (isConnected && !realStatus) {
+            // Flag és valóság eltér – valószínűleg éppen szakadt meg
+            const_cast<WifiManager*>(this)->isConnected = false;
+        }
+        return isConnected && realStatus;
     }
     const char* getLocalIP() const { return localIPBuf; }
     int32_t     getRSSI()    const {

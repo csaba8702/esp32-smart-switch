@@ -63,6 +63,10 @@
 
 class EepromManager {
 private:
+    bool     _commitPending = false;          // van-e nem mentett változás
+    uint32_t _lastChangeMs  = 0;              // mikor volt az utolsó változás
+    static const uint32_t COMMIT_DELAY_MS = 3000; // 3 mp után commitol
+
     void writeString(int offset, const String& str, int maxLen) {
         int len = str.length();
         if (len > maxLen - 1) len = maxLen - 1;
@@ -86,6 +90,12 @@ private:
         EEPROM.write(offset + 1, (uint8_t)((val >> 8) & 0xFF));
         EEPROM.write(offset + 2, (uint8_t)((val >> 16) & 0xFF));
         EEPROM.write(offset + 3, (uint8_t)((val >> 24) & 0xFF));
+    }
+
+    // Késleltetett commit – nem blokkol azonnal
+    void markDirty() {
+        _commitPending = true;
+        _lastChangeMs  = millis();
     }
 
     uint32_t readUint32(int offset) {
@@ -119,11 +129,29 @@ public:
 
     bool isValid() { return EEPROM.read(EEPROM_MAGIC_ADDR) == EEPROM_MAGIC_VAL; }
 
+    // ---- Késleltetett commit – Main.ino loop()-ból hívni ----
+    // Ha 3 másodperce nem volt változás és van pending commit, akkor ír flash-re
+    void handle() {
+        if (!_commitPending) return;
+        if (millis() - _lastChangeMs < COMMIT_DELAY_MS) return;
+        EEPROM.commit();
+        _commitPending = false;
+        Serial.println("[EEPROM] Commit kesz.");
+    }
+
+    // Azonnali commit – ESP.restart() előtt kötelező hívni!
+    void commitNow() {
+        if (_commitPending) {
+            EEPROM.commit();
+            _commitPending = false;
+        }
+    }
+
     // ---- WiFi ----
     void saveWiFi(const String& ssid, const String& pass) {
         writeString(EEPROM_SSID_ADDR, ssid, EEPROM_SSID_LEN);
         writeString(EEPROM_PASS_ADDR, pass, EEPROM_PASS_LEN);
-        EEPROM.commit();
+        markDirty();
     }
     String loadSSID() { return readString(EEPROM_SSID_ADDR, EEPROM_SSID_LEN); }
     String loadPass() { return readString(EEPROM_PASS_ADDR, EEPROM_PASS_LEN); }
@@ -131,13 +159,13 @@ public:
     // ---- Web jelszó / token ----
     void saveWebPassword(const String& pass) {
         writeString(EEPROM_WEB_PASS, pass, 32);
-        EEPROM.commit();
+        markDirty();
     }
     String loadWebPassword() { return readString(EEPROM_WEB_PASS, 32); }
 
     void saveToken(const String& token) {
         writeString(EEPROM_TOKEN_ADDR, token, EEPROM_TOKEN_LEN);
-        EEPROM.commit();
+        markDirty();
     }
     String loadToken() { return readString(EEPROM_TOKEN_ADDR, EEPROM_TOKEN_LEN); }
 
@@ -145,7 +173,7 @@ public:
     void saveRelayState(uint8_t id, bool state) {
         if (id < 1 || id > MAX_RELAY_COUNT) return;
         EEPROM.write(EEPROM_RELAY_STATE + (id - 1), state ? 1 : 0);
-        EEPROM.commit();
+        markDirty();
     }
     bool loadRelayState(uint8_t id) {
         if (id < 1 || id > MAX_RELAY_COUNT) return false;
@@ -156,7 +184,7 @@ public:
     void saveRelayStartTime(uint8_t id, uint32_t timestamp) {
         if (id < 1 || id > MAX_RELAY_COUNT) return;
         writeUint32(EEPROM_RELAY_START_TIME + (id - 1) * 4, timestamp);
-        EEPROM.commit();
+        markDirty();
     }
     uint32_t loadRelayStartTime(uint8_t id) {
         if (id < 1 || id > MAX_RELAY_COUNT) return 0;
@@ -167,7 +195,7 @@ public:
     void saveRelayName(uint8_t id, const String& name) {
         if (id < 1 || id > MAX_RELAY_COUNT) return;
         writeString(EEPROM_RELAY_NAME + (id - 1) * 32, name, 32);
-        EEPROM.commit();
+        markDirty();
     }
     String loadRelayName(uint8_t id) {
         if (id < 1 || id > MAX_RELAY_COUNT) return "";
@@ -191,7 +219,7 @@ public:
         EEPROM.write(b + 18, action);
         EEPROM.write(b + 19, endAction);
         EEPROM.write(b + 20, active ? 1 : 0);
-        EEPROM.commit();
+        markDirty();
     }
 
     // ---- Időzítési szabály betöltés ----
@@ -217,7 +245,7 @@ public:
         if (relayId < 1 || relayId > MAX_RELAY_COUNT || ruleIdx >= MAX_RULES_PER_RELAY) return;
         int b = ruleBase(relayId, ruleIdx);
         for (int i = 0; i < EEPROM_RULE_SIZE; i++) EEPROM.write(b + i, 0);
-        EEPROM.commit();
+        markDirty();
     }
 
     // ---- Relay konfiguráció mentés (idx: 0-based) ----
@@ -244,7 +272,7 @@ public:
         EEPROM.write(b + 5, (uuid >> 16) & 0xFF);
         EEPROM.write(b + 6, (uuid >> 8)  & 0xFF);
         EEPROM.write(b + 7,  uuid        & 0xFF);
-        EEPROM.commit();
+        markDirty();
     }
 
     // ---- Relay konfiguráció betöltés (idx: 0-based) ----
@@ -277,7 +305,7 @@ public:
         if (idx >= MAX_RELAY_COUNT) return;
         int b = EEPROM_RELAY_CONFIG_START + idx * EEPROM_RELAY_CONFIG_SIZE;
         for (int i = 0; i < EEPROM_RELAY_CONFIG_SIZE; i++) EEPROM.write(b + i, 0);
-        EEPROM.commit();
+        markDirty();
     }
 
     void dump() {}

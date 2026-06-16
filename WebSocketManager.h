@@ -10,6 +10,7 @@
 #include "SensorManager.h" // Ez kell ide, hogy a fordító lássa a metódusokat
 
 class EepromManager;
+extern uint32_t bootCount;  // Main.ino-ban definiálva
 
 class WebSocketManager {
 private:
@@ -61,7 +62,6 @@ void sendAllStates(uint8_t num) {
     // A puffer méretét 2048-ról 4096-ra növeltem, hogy a szenzor adatok biztosan elférjenek
     StaticJsonDocument<4096> doc;
     doc["type"] = "full_state";
-    extern uint32_t bootCount;
     doc["boot_count"] = bootCount;
 
     // ESP32 memória adatok – minden küldésnél frissen lekérve
@@ -124,7 +124,6 @@ void sendAllStates(uint8_t num) {
     }
 
     String json;
-    extern uint32_t bootCount;
     serializeJson(doc, json);
     if (num == 50) webSocket.broadcastTXT(json);
     else           webSocket.sendTXT(num, json);
@@ -255,8 +254,9 @@ void handleMessage(const char* message) {
             serializeJson(ack, ackJson);
             webSocket.broadcastTXT(ackJson);
         }
+        eeprom->commitNow();  // Fontos: flush előtt restart!
         Serial.println("[WS] Relay config elmentve – ujraindul...");
-        delay(500);
+        delay(300);
         ESP.restart();
     }
 }

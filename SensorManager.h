@@ -73,22 +73,9 @@ private:
         }
 
         // Lista
-        /*
-        Ha zavaró, hogy 1-es, 2-es ID-kra kell hivatkozni, a SensorManager processCommand
-        metódusát a SensorManager.h-ban kiegészítheted egy list paranccsal, ami kiírja a
-        Serial monitorra a szenzorok ID-jait és a hozzájuk tartozó UUID-kat:
-        */
-        // Add ezt a processCommand-hoz a SensorManager.h-ban
-        if (cmd == "list") {
-            for (int i = 0; i < _count; i++) {
-                if (_sensors[i]) {
-                    Serial.printf("ID: %d | Type: %s | UUID: %06X | Active: %s\n", 
-                        _sensors[i]->sensorId, 
-                        _sensors[i]->getType(), 
-                        _sensors[i]->relayUUID,
-                        _sensors[i]->active ? "IGEN" : "NEM");
-                }
-            }
+        if (strcmp(cmd, "list") == 0) {
+            printList();
+            return;
         }
 
         Serial.println("[SensorManager] Ismeretlen parancs. Hasznalat: csX:Y.YY | list");

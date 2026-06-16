@@ -62,7 +62,7 @@ public:
             uint32_t uuid = 0;
             eeprom->loadRelayConfig(i, active, pin, activeLow, devType, modType, uuid);
 
-            if (!active || pin == 0) continue;
+            if (!active) continue;  // pin==0 (GPIO0) érvényes lehet
 
             // Config feltöltése
             uint8_t id = i + 1;

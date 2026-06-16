@@ -558,10 +558,6 @@ function addWeekly() {
   if (!startVal || !endVal) { alert('Adj meg idopontot!'); return; }
   if (dayMask === 0)         { alert('Valassz legalabb egy napot!'); return; }
 
-  const [sh, sm] = startVal.split(':').map(Number);
-  const [eh, em] = endVal.split(':').map(Number);
-  
-
   const endActionW = parseInt(document.getElementById('weekEndAction').value);
   ws.send(JSON.stringify({
     type: 'add_schedule_weekly',
@@ -757,15 +753,6 @@ function saveRelayCfg() {
   pendingReboot   = true;
 }
 
-// ESC és háttér kattintás mindkét modalt bezárja
-document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { closeRelayModal(); closePassModal(); }
-});
-document.addEventListener('click', e => {
-  if (e.target === document.getElementById('relayModal')) closeRelayModal();
-  if (e.target === document.getElementById('passModal'))  closePassModal();
-});
-
 // ================================================================
 // Jelszócsere modal
 // ================================================================
@@ -788,20 +775,16 @@ function setPassMsg(text, type) {
   el.className = 'modal-msg' + (type ? ' ' + type : '');
 }
 
-// Modal bezárása háttérre kattintáskor
-document.addEventListener('click', e => {
-  if (e.target === document.getElementById('passModal')) closePassModal();
-});
-
-// ESC billentyű bezárja
+// Egységes event listener – ESC, háttér kattintás, Enter
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') closePassModal();
-});
-
-// Enter billentyű menti
-document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { closeRelayModal(); closePassModal(); closeSensorModal(); }
   if (e.key === 'Enter' && document.getElementById('passModal').classList.contains('open'))
     changePassword();
+});
+document.addEventListener('click', e => {
+  if (e.target === document.getElementById('relayModal')) closeRelayModal();
+  if (e.target === document.getElementById('passModal'))  closePassModal();
+  if (e.target === document.getElementById('sensorModal')) closeSensorModal();
 });
 
 function changePassword() {

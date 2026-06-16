@@ -34,7 +34,7 @@
 // ----------------------------------------------------------------
 // Watchdog timeout
 // ----------------------------------------------------------------
-static const uint32_t LOOP_WDT_TIMEOUT_S = 10;
+static const uint32_t LOOP_WDT_TIMEOUT_S = 30;  // 10->30: WebManager nagy response blokkolhat
 
 // ----------------------------------------------------------------
 // WiFi beállítások
@@ -206,6 +206,9 @@ void loop() {
 
     // ---- NTP ----
     ntpManager.handle();
+
+    // ---- EEPROM késleltetett commit ----
+    eepromManager.handle();
 
     // ---- Hálózati stack ----
     yield();
